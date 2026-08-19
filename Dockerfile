@@ -23,17 +23,19 @@ RUN apt-get update \
          ffmpeg curl ca-certificates python3 python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
-# Pin yt-dlp via PyPI rather than pulling "latest", so image builds are
-# reproducible. Override with:  docker build --build-arg YTDLP_VERSION=2026.x.x
-# v1.0.0 shipped the PyInstaller "onefile" yt-dlp_linux binary, which failed
-# to start in the hardened container ("libz.so.1: failed to map segment from
-# shared object"). Installing yt-dlp as a pure-Python package links the system
-# zlib (the one curl already loads fine) and skips the onefile extraction
-# entirely. --break-system-packages is required for Debian's externally-managed
-# Python environment.
-ARG YTDLP_VERSION=2026.07.04
+# Install the LATEST yt-dlp NIGHTLY build (rolling). Nightly carries the newest
+# YouTube player-client fixes; stable 2026.07.04 hit "unable to download video
+# data: HTTP Error 403: Forbidden", while nightly 2026.08.18.122307 does not
+# (verified in a live container). To grab a newer nightly on rebuild, use:
+#   docker compose build --no-cache stow
+# Nightly builds install as a pure-Python package from the yt-dlp-nightly-builds
+# GitHub release tarball, so there is no PyInstaller bootloader (the v1.0.0
+# "libz.so.1: failed to map segment from shared object" crash cannot occur).
+# curl_cffi enables browser impersonation for the YouTube player clients.
+# --break-system-packages is required for Debian's externally-managed Python.
 RUN python3 -m pip install --no-cache-dir --break-system-packages \
-      "yt-dlp==${YTDLP_VERSION}"
+      "yt-dlp@https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp.tar.gz" \
+      "curl_cffi" "mutagen" "pycryptodomex" "brotli"
 
 WORKDIR /app
 COPY package.json package-lock.json ./

@@ -379,6 +379,8 @@ class DownloadManager {
 
     const args = [
       '--js-runtimes', 'node',
+      '--impersonate', 'chrome',
+      '--remote-components', 'ejs:github',
       '--force-overwrites',
       '-f', 'bestaudio',
       '-x',
