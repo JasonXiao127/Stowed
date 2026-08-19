@@ -40,11 +40,6 @@ Sonarr/Radarr/Prowlarr, so a shared media library "just works".
 | `STOW_DOWNLOAD_DIR` | `/downloads` | Where completed files are written (volume `./downloads`) |
 | `STOW_CONFIG_DIR`   | `/config`    | Where `queue-state.json` lives (volume `./config`)     |
 | `STOW_API_KEY`      | *(blank)*     | Optional shared secret for LAN access                  |
-| `STOW_ALLOWED_HOSTS` | *(blank)*   | Hostnames (`host` or `host:port`) allowed to reach the API/WebSocket. Loopback and IP-literal access always works; add entries only if you open Stow via a hostname |
-| `STOW_ALLOW_PRIVATE_IP_URLS` | *(off)* | Set `1` to allow downloads from private/LAN address targets (SSRF guard opt-out) |
-| `STOW_MAX_QUEUE`    | `500`    | Max download jobs in the queue                          |
-| `STOW_MAX_URLS_PER_REQUEST` | `100` | Max URLs accepted per `/api/queue` request             |
-| `STOW_MAX_WS_PER_IP` | `32`    | Max WebSocket connections per client IP (`0` = unlimited) |
 | `YTDLP_VERSION`     | pinned | Build arg pinning the yt-dlp release (override in `.env`) |
 
 > **Port configuration:** the web UI port is set directly in `docker-compose.yml`
@@ -80,27 +75,14 @@ docker compose up -d --build && echo "Web UI: http://$(hostname -I | awk '{print
 
 - No auth by default — only run this on a trusted network. To require a shared
   secret, set `STOW_API_KEY=...` in `.env`; every `/api/*` request and the
-  WebSocket handshake then needs it. The bundled UI authenticates automatically
-  once you enter the key in the **API key** field at the bottom of the page
-  (saved locally): fetches send `X-API-Key`, and the WebSocket appends
-  `?apikey=`. Non-browser clients may also use `Authorization: Bearer ...`.
+  WebSocket handshake then needs it (`?apikey=...`, `X-API-Key`, or
+  `Authorization: Bearer ...`).
 - The API is confined to the download directory: path-traversal, symlink escapes,
   and arbitrary file deletion are blocked (deletion is limited to files belonging
   to *completed* queue jobs).
-- Cross-origin requests are rejected and the **`Host` header must be allowed**
-  (DNS-rebinding / drive-by CSRF guard): loopback and IP-literal access always
-  works; if you open Stow via a hostname, add it to `STOW_ALLOWED_HOSTS` (e.g.
-  `media-pc:5183`). JSON bodies are enforced on mutating endpoints, and thumbnail
-  uploads are size-limited and validated before they reach ffmpeg.
-- API requests are rate-limited in-process (240 req/min LAN-wide, 40 POSTs/min,
-  8 failed auth attempts/min → 429), and the queue is capped
-  (`STOW_MAX_QUEUE`, `STOW_MAX_URLS_PER_REQUEST`) so a stray script cannot fill
-  the disk or spawn an unbounded number of downloads.
-- Download URLs are validated before they reach yt-dlp: only `http(s)` URLs are
-  accepted, and literal loopback/private/link-local targets (cloud metadata,
-  routers, other LAN hosts) are refused unless you set
-  `STOW_ALLOW_PRIVATE_IP_URLS=1`. Hostnames that merely resolve to a private
-  address are not blocked — keep the container on a restricted network.
+- Cross-origin requests are rejected (DNS-rebinding / drive-by CSRF guard), JSON
+  bodies are enforced on mutating endpoints, and thumbnail uploads are size-limited
+  and validated before they reach ffmpeg.
 - Never expose it to the public internet without `STOW_API_KEY` — it can make the
   server fetch arbitrary URLs (an inherent property of a YouTube downloader).
 
@@ -110,10 +92,8 @@ docker compose up -d --build && echo "Web UI: http://$(hostname -I | awk '{print
 npm install
 npm run build:web     # build the renderer into dist/
 npm test              # run the queue state-machine unit tests (node --test)
-npm start:server      # serve built UI + API at http://localhost:5183
-# hot-reload dev: run BOTH of these, then open http://localhost:5183
-npm run dev:web       # Vite (internal module origin, do NOT open this directly)
-npm run dev:server    # Node API/WS server + proxy to Vite (OPEN THIS -> :5183)
+npm run start:server      # serve UI + API at http://localhost:5183
+# or hot-reload UI:  npm run dev:web  (Vite on :5173)  then  npm run dev:server
 ```
 
 ## Why Stow?
@@ -125,10 +105,6 @@ YouTube stores audio as Opus. For 1080p videos that’s usually around 160 kbps,
 Stow uses yt-dlp to grab the **real** Opus stream straight from YouTube. No conversion, no lies. You get exactly what YouTube serves and its untouched.
 
 Served as a self-hosted web app on your LAN — no ads, no “download our app” pop-ups, no file size limits.
-
-<img width="1179" height="788" alt="image" src="https://github.com/user-attachments/assets/42b73f17-476f-4765-83d9-8d5c8b503ba5" />
-
-<img width="550" height="858" alt="image" src="https://github.com/user-attachments/assets/f5343202-d4f9-4f33-80d1-c4c2c87765e7" />
 
 ## Features
 
