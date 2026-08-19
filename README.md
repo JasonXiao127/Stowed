@@ -2,6 +2,8 @@
 
 **Download YouTube audio as high-quality Opus files — the way YouTube actually sounds, not a lie.**
 
+Ported over version of Stow into a web client that can be deployed directly onto a home server. 
+
 ## Deploy with Docker (web)
 
 Stow runs as a self-contained web app: a Node server serves the same React UI
