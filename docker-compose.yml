@@ -3,9 +3,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        # Pin the yt-dlp version baked into the image (override via .env).
-        YTDLP_VERSION: ${YTDLP_VERSION:-2026.07.04}
     # Published image on Docker Hub: maraudermarauder/stowed
     # If you just want to RUN it (no local build), use `pull_policy: always`
     # (or the stock compose pulls it automatically when no build is needed):

@@ -91,14 +91,15 @@ update it if you change that line.)
 ### Build from source (optional)
 
 If you cloned this repo or want to change the code, the checked-in
-`docker-compose.yml` includes a `build:` block (and pins a specific yt-dlp
-release via `YTDLP_VERSION`). Build a local image and run it instead:
+`docker-compose.yml` includes a `build:` block. Build a local image and run it instead:
 
-yt-dlp is installed from PyPI as a pure-Python package (`pip install
-yt-dlp==$YTDLP_VERSION`), so the same image works on any CPU architecture and
-avoids the crash-prone PyInstaller "onefile" binary shipped in v1.0.0 (which
-failed in hardened/read-only containers with `libz.so.1: failed to map segment
-from shared object`).
+yt-dlp is installed as the LATEST NIGHTLY build (a pure-Python package from the
+yt-dlp-nightly-builds GitHub release), so it always carries the newest YouTube
+player-client fixes — stable 2026.07.04 failed with `HTTP Error 403: Forbidden`
+on media downloads. It avoids the crash-prone PyInstaller "onefile" binary from
+v1.0.0 (`libz.so.1: failed to map segment from shared object`) and works on any
+CPU architecture. Rebuild with `docker compose build --no-cache stow` to fetch
+a newer nightly.
 
 ```bash
 docker compose up -d --build
@@ -110,9 +111,9 @@ the compose `image:` is already tagged correctly:
 ```bash
 docker login
 docker compose build stow
-docker tag maraudermarauder/stowed:latest maraudermarauder/stowed:1.0.1
+docker tag maraudermarauder/stowed:latest maraudermarauder/stowed:1.0.2
 docker compose push stow
-docker push maraudermarauder/stowed:1.0.1
+docker push maraudermarauder/stowed:1.0.2
 ```
 
 ### Files, config & permissions
@@ -125,7 +126,7 @@ docker push maraudermarauder/stowed:1.0.1
 | `STOW_DOWNLOAD_DIR` | `/downloads` | Where completed files are written (volume `./downloads`) |
 | `STOW_CONFIG_DIR`   | `/config`    | Where `queue-state.json` lives (volume `./config`)     |
 | `STOW_API_KEY`      | *(blank)*     | Optional shared secret for LAN access                  |
-| `YTDLP_VERSION`     | pinned | Build arg pinning the yt-dlp release — only relevant when building from source (override via `.env`) |
+| `YTDLP_VERSION`     | *(removed)* | yt-dlp is always the latest nightly build (no pin needed) |
 
 > **Port configuration:** the web UI port is set directly in `docker-compose.yml`
 > via the `x-stow-port: &stow_port` anchor (default **5183**). A `STOW_PORT`
