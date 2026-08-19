@@ -10,9 +10,6 @@ Stow runs as a self-contained web app: a Node server serves the same React UI
 and handles downloads, and you open it from any device on your network at
 `http://<machine-ip>:5183`.
 
-Pre-built images are published to **Docker Hub** as `maraudermarauder/stowed`
-(plus versioned tags like `:1.0.0`). You don't need to build anything — just
-pull and run.
 
 ### Quick start — pull the Docker Hub image
 
@@ -25,7 +22,7 @@ mkdir -p downloads config
 sudo chown -R 1000:1000 downloads config
 ```
 
-**2.** Save this as `docker-compose.yml` (pulls the published image — no build):
+**2.** Save this as `docker-compose.yml`:
 
 ```yaml
 services:
