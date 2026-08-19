@@ -17,22 +17,23 @@ ENV DEBIAN_FRONTEND=noninteractive \
     XDG_CACHE_HOME=/tmp
 
 # ffmpeg for remuxing/cover art, curl for the healthcheck, ca-certificates so
-# yt-dlp can talk to YouTube over TLS.
+# yt-dlp can talk to YouTube over TLS, python3+pip to host the pinned yt-dlp.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg curl ca-certificates \
+    && apt-get install -y --no-install-recommends \
+         ffmpeg curl ca-certificates python3 python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
-# Pin yt-dlp rather than pulling "latest", so image builds are reproducible.
-# Override with:  docker build --build-arg YTDLP_VERSION=2026.x.x
+# Pin yt-dlp via PyPI rather than pulling "latest", so image builds are
+# reproducible. Override with:  docker build --build-arg YTDLP_VERSION=2026.x.x
+# v1.0.0 shipped the PyInstaller "onefile" yt-dlp_linux binary, which failed
+# to start in the hardened container ("libz.so.1: failed to map segment from
+# shared object"). Installing yt-dlp as a pure-Python package links the system
+# zlib (the one curl already loads fine) and skips the onefile extraction
+# entirely. --break-system-packages is required for Debian's externally-managed
+# Python environment.
 ARG YTDLP_VERSION=2026.07.04
-# SHA-256 of the yt-dlp_linux binary for the pinned release (from SHA2-256SUMS),
-# verified at build time so a compromised release/MITM cannot ship a tainted
-# binary. Update BOTH args together when bumping the version.
-ARG YTDLP_SHA256=6bbb3d314cde4febe36e5fa1d55462e29c974f63444e707871834f6d8cc210ae
-RUN curl -fsSL -o /usr/local/bin/yt-dlp \
-      "https://github.com/yt-dlp/yt-dlp/releases/download/${YTDLP_VERSION}/yt-dlp_linux" \
-    && echo "${YTDLP_SHA256}  /usr/local/bin/yt-dlp" | sha256sum -c - \
-    && chmod +x /usr/local/bin/yt-dlp
+RUN python3 -m pip install --no-cache-dir --break-system-packages \
+      "yt-dlp==${YTDLP_VERSION}"
 
 WORKDIR /app
 COPY package.json package-lock.json ./
