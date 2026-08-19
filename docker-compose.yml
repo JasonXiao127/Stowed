@@ -1,0 +1,66 @@
+services:
+  stow:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # Pin the yt-dlp version baked into the image (override via .env).
+        YTDLP_VERSION: ${YTDLP_VERSION:-2026.07.04}
+    image: stow:latest
+    container_name: stow
+
+    # ---- Web UI port (edit this ONE line to change it) ----
+    # End user configures the port right here in the compose file.
+    # Default = 5183 -> http://<machine-ip>:5183
+    x-stow-port: &stow_port 5183
+
+    # Map host:container on the configured port.
+    ports:
+      - target: *stow_port
+        published: *stow_port
+        protocol: tcp
+
+    environment:
+      STOW_DOWNLOAD_DIR: /downloads
+      STOW_CONFIG_DIR: /config
+      STOW_HOST: 0.0.0.0
+      STOW_PORT: *stow_port
+      # Informational (see README); actual ownership comes from `user:` below.
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+      # Optional shared secret for LAN access. Blank = no auth (trusted LAN).
+      # STOW_API_KEY: ${STOW_API_KEY:-}
+      # Hostnames allowed to reach the API/WebSocket (DNS-rebinding defense).
+      # Loopback + IP-literal access always works; only add if you open Stow via
+      # a hostname, e.g. http://media-pc:5183 -> "media-pc:5183"
+      # STOW_ALLOWED_HOSTS: ${STOW_ALLOWED_HOSTS:-}
+      # SSRF guard: set to 1 to allow downloads from private/LAN addresses
+      # (e.g. you intentionally download from another machine on your network).
+      # STOW_ALLOW_PRIVATE_IP_URLS: ${STOW_ALLOW_PRIVATE_IP_URLS:-}
+
+    # Downloaded audio files land in ./downloads and queue state in ./config.
+    # Give this container the SAME uid:gid as your *arr stack, e.g. 1000:1000,
+    # so the files it writes match your media folder permissions.
+    user: "${PUID:-1000}:${PGID:-1000}"
+    # ---- Hardening ------------------------------------------------------
+    read_only: true          # root filesystem is read-only; writes go to the
+    tmpfs:                   # /downloads & /config volumes and the /tmp tmpfs
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    init: true               # tini as PID 1 so SIGTERM/SIGINT reach Node
+    volumes:
+      - ./downloads:/downloads
+      - ./config:/config
+
+    restart: unless-stopped
+
+    healthcheck:
+      # Uses the container's STOW_PORT env, so it always matches the port above.
+      test: ["CMD-SHELL", "curl -fsS http://localhost:$$STOW_PORT/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

@@ -1,0 +1,17 @@
+node_modules
+dist
+out
+.vite
+bin
+.git
+.gitignore
+*.log
+.env
+# Local data dirs must never enter the build context (slow builds, and they
+# would bake your queue-state.json/media into the image's build layers).
+downloads
+config
+config-test
+downloads-test
+src/renderer/dist
+src/renderer/.vite
