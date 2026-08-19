@@ -94,6 +94,12 @@ If you cloned this repo or want to change the code, the checked-in
 `docker-compose.yml` includes a `build:` block (and pins a specific yt-dlp
 release via `YTDLP_VERSION`). Build a local image and run it instead:
 
+yt-dlp is installed from PyPI as a pure-Python package (`pip install
+yt-dlp==$YTDLP_VERSION`), so the same image works on any CPU architecture and
+avoids the crash-prone PyInstaller "onefile" binary shipped in v1.0.0 (which
+failed in hardened/read-only containers with `libz.so.1: failed to map segment
+from shared object`).
+
 ```bash
 docker compose up -d --build
 ```
@@ -104,7 +110,9 @@ the compose `image:` is already tagged correctly:
 ```bash
 docker login
 docker compose build stow
+docker tag maraudermarauder/stowed:latest maraudermarauder/stowed:1.0.1
 docker compose push stow
+docker push maraudermarauder/stowed:1.0.1
 ```
 
 ### Files, config & permissions
