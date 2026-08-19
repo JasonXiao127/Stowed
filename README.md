@@ -8,27 +8,105 @@ Stow runs as a self-contained web app: a Node server serves the same React UI
 and handles downloads, and you open it from any device on your network at
 `http://<machine-ip>:5183`.
 
+Pre-built images are published to **Docker Hub** as `maraudermarauder/stowed`
+(plus versioned tags like `:1.0.0`). You don't need to build anything — just
+pull and run.
+
+### Quick start — pull the Docker Hub image
+
+**1.** *(first time)* create the data folders owned by your uid/gid. Use the
+**same** uid as your *arr stack (e.g. `1000:1000`) so downloaded files match
+your media-folder permissions:
+
 ```bash
-# 1. (first time) create the data folders owned by your uid/gid.
-#    Use the SAME uid as your *arr stack (e.g. 1000:1000) so downloaded files
-#    match your media-folder permissions.
 mkdir -p downloads config
 sudo chown -R 1000:1000 downloads config
-
-# 2. (optional) copy .env.example to .env and set PUID/PGID / API key.
-
-# 3. build & start
-docker compose up -d --build
-
-# 4. open it (default port, changeable in docker-compose.yml)
-#    http://<machine-ip>:5183
 ```
 
-The downloaded audio files land in `./downloads` (mounted at `/downloads`) and
-the persistent download queue lives in `./config` (`/config`), surviving
-restarts. Because the container runs as the uid you give it (`user:` →
-`PUID:PGID`), every file it writes is owned by that uid:gid — same convention as
-Sonarr/Radarr/Prowlarr, so a shared media library "just works".
+**2.** Save this as `docker-compose.yml` (pulls the published image — no build):
+
+```yaml
+services:
+  stow:
+    image: maraudermarauder/stowed:latest
+    container_name: stow
+    # ---- Web UI port (edit this ONE line to change it) ----
+    x-stow-port: &stow_port 5183
+
+    ports:
+      - target: *stow_port
+        published: *stow_port
+        protocol: tcp
+
+    environment:
+      STOW_DOWNLOAD_DIR: /downloads
+      STOW_CONFIG_DIR: /config
+      STOW_HOST: 0.0.0.0
+      STOW_PORT: *stow_port
+      # Optional: shared secret for LAN access (blank = no auth, trusted LAN).
+      STOW_API_KEY: ${STOW_API_KEY:-}
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+
+    # Run as your uid:gid so files match your media-folder permissions.
+    user: "${PUID:-1000}:${PGID:-1000}"
+    # ---- Hardening ------------------------------------------------------
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    init: true
+    volumes:
+      - ./downloads:/downloads
+      - ./config:/config
+
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:$$STOW_PORT/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+```
+
+**3.** Fetch the image and start it:
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+**4.** Open it — `http://<machine-ip>:5183`
+
+One-line unauthenticated LAN setup:
+
+```bash
+mkdir -p downloads config && sudo chown -R 1000:1000 downloads config && docker compose pull && docker compose up -d && echo "Web UI: http://$(hostname -I | awk '{print $1}'):5183"
+```
+(The port in the `echo` matches the `x-stow-port: &stow_port` anchor above;
+update it if you change that line.)
+
+### Build from source (optional)
+
+If you cloned this repo or want to change the code, the checked-in
+`docker-compose.yml` includes a `build:` block (and pins a specific yt-dlp
+release via `YTDLP_VERSION`). Build a local image and run it instead:
+
+```bash
+docker compose up -d --build
+```
+
+To rebuild and push your own image to Docker Hub (`maraudermarauder/stowed`),
+the compose `image:` is already tagged correctly:
+
+```bash
+docker login
+docker compose build stow
+docker compose push stow
+```
 
 ### Files, config & permissions
 
@@ -40,7 +118,7 @@ Sonarr/Radarr/Prowlarr, so a shared media library "just works".
 | `STOW_DOWNLOAD_DIR` | `/downloads` | Where completed files are written (volume `./downloads`) |
 | `STOW_CONFIG_DIR`   | `/config`    | Where `queue-state.json` lives (volume `./config`)     |
 | `STOW_API_KEY`      | *(blank)*     | Optional shared secret for LAN access                  |
-| `YTDLP_VERSION`     | pinned | Build arg pinning the yt-dlp release (override in `.env`) |
+| `YTDLP_VERSION`     | pinned | Build arg pinning the yt-dlp release — only relevant when building from source (override via `.env`) |
 
 > **Port configuration:** the web UI port is set directly in `docker-compose.yml`
 > via the `x-stow-port: &stow_port` anchor (default **5183**). A `STOW_PORT`
@@ -51,14 +129,6 @@ Sonarr/Radarr/Prowlarr, so a shared media library "just works".
 > The **files never leave whatever directory compose gives the container.** To
 > move downloads elsewhere, change the mount, e.g. `./music:/downloads`. The app
 > only ever writes inside `STOW_DOWNLOAD_DIR`/`STOW_CONFIG_DIR`.
-
-Piped command for a quick unauthenticated LAN setup:
-
-```bash
-docker compose up -d --build && echo "Web UI: http://$(hostname -I | awk '{print $1}'):5183"
-```
-(The port above matches the default anchor in `docker-compose.yml`; update the
-`echo` if you change `x-stow-port: &stow_port`.)
 
 ### Behavior differences vs. the desktop app
 

@@ -6,7 +6,11 @@ services:
       args:
         # Pin the yt-dlp version baked into the image (override via .env).
         YTDLP_VERSION: ${YTDLP_VERSION:-2026.07.04}
-    image: stow:latest
+    # Published image on Docker Hub: maraudermarauder/stowed
+    # If you just want to RUN it (no local build), use `pull_policy: always`
+    # (or the stock compose pulls it automatically when no build is needed):
+    #   docker compose pull && docker compose up -d
+    image: maraudermarauder/stowed:latest
     container_name: stow
 
     # ---- Web UI port (edit this ONE line to change it) ----
