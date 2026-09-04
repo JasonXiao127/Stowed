@@ -131,8 +131,12 @@ export default function App() {
     setShowMetadata(true);
   };
 
-  const handleShowInFolder = (filePath) => {
-    window.electronAPI.showInFolder(filePath);
+  const handleShowInFolder = async (filePath) => {
+    try {
+      await window.electronAPI.showInFolder(filePath);
+    } catch (err) {
+      showToast(`Failed to open file location: ${err.message}`, 'error');
+    }
   };
 
   const handleCloseMetadata = () => {

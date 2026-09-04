@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "Shared React UI for Stow apps (queue panel, URL input, theme)",
   "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
   "license": "ISC",
   "type": "module",
   "peerDependencies": {
