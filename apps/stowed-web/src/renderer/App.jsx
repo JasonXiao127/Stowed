@@ -1,7 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useTheme } from './context/ThemeContext';
-import UrlInput from './components/UrlInput';
-import QueuePanel from './components/QueuePanel';
+import { useTheme, UrlInput, QueuePanel } from '@stowed/shared-ui';
 import MetadataEditor from './components/MetadataEditor';
 import FileBrowser from './components/FileBrowser';
 import api from './api';

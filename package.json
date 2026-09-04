@@ -1,0 +1,26 @@
+{
+  "name": "stowed",
+  "version": "1.0.0",
+  "description": "Stow monorepo - YouTube Audio Downloader & Tagger (Electron client + Docker web UI)",
+  "private": true,
+  "type": "commonjs",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev:server --workspace stowed-web",
+    "dev:client": "npm run dev --workspace stow-client",
+    "build:web": "npm run build --workspace stowed-web",
+    "build:client": "npm run package --workspace stow-client",
+    "make:client": "npm run make --workspace stow-client",
+    "start:web": "npm run start --workspace stowed-web",
+    "test:web": "npm run test --workspace stowed-web",
+    "setup-binaries:web": "npm run setup-binaries --workspace stowed-web",
+    "setup-binaries:client": "npm run setup-binaries --workspace stow-client",
+    "test": "npm run test:web"
+  },
+  "keywords": [],
+  "author": "Stow",
+  "license": "ISC"
+}

@@ -1,7 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useTheme } from './context/ThemeContext';
-import UrlInput from './components/UrlInput';
-import QueuePanel from './components/QueuePanel';
+import { useTheme, UrlInput, QueuePanel } from '@stowed/shared-ui';
 import MetadataEditor from './components/MetadataEditor';
 
 export default function App() {
@@ -133,6 +131,10 @@ export default function App() {
     setShowMetadata(true);
   };
 
+  const handleShowInFolder = (filePath) => {
+    window.electronAPI.showInFolder(filePath);
+  };
+
   const handleCloseMetadata = () => {
     setShowMetadata(false);
     setSelectedFile(null);
@@ -155,6 +157,7 @@ export default function App() {
           onCancelAll={handleCancelAll}
           onCancelJob={handleCancelJob}
           onEditFile={handleEditDownloadedFile}
+          onShowInFolder={handleShowInFolder}
         />
       </div>
 

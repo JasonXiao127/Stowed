@@ -1,0 +1,8 @@
+{
+  "name": "@stowed/core",
+  "version": "1.0.0",
+  "description": "Shared backend core for Stow apps (cover-art validation, tag sanitizing)",
+  "main": "src/index.js",
+  "license": "ISC",
+  "type": "commonjs"
+}

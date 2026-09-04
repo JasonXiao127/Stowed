@@ -1,6 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import { ThemeProvider } from './context/ThemeContext';
+import { ThemeProvider } from '@stowed/shared-ui';
 import App from './App';
 import './styles.css';
 

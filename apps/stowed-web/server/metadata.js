@@ -3,19 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const { randomUUID } = require('crypto');
 const { getFfmpegPath } = require('./binaries');
-
-/**
- * Sanitize a string for use in FFmpeg command arguments.
- * Removes or escapes characters that could be used for command injection.
- */
-function sanitizeTagValue(value) {
-  if (typeof value !== 'string') return '';
-  // Remove null bytes and control characters, but preserve meaningful leading/
-  // trailing whitespace (some tag values legitimately contain it). A value that
-  // consists only of whitespace is normalized to empty.
-  const cleaned = value.replace(/[\x00-\x1f\x7f]/g, '');
-  return cleaned.trim() === '' ? '' : cleaned;
-}
+const { sanitizeTagValue } = require('@stowed/core');
 
 /**
  * Write metadata tags to an audio file using FFmpeg.

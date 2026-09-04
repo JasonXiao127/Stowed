@@ -1,7 +1,7 @@
 {
-  "name": "stow",
+  "name": "stow-client",
   "version": "1.0.0",
-  "description": "Electron YouTube Audio Downloader & Tagger",
+  "description": "Stow Client - Electron YouTube Audio Downloader & Tagger",
   "main": ".vite/build/index.js",
   "scripts": {
     "start": "electron-forge start",
@@ -24,6 +24,7 @@
     "vite": "^6.0.0"
   },
   "dependencies": {
+    "@stowed/shared-ui": "*",
     "electron-squirrel-startup": "^1.0.1",
     "music-metadata": "^11.0.0",
     "png-to-ico": "^3.0.2",
