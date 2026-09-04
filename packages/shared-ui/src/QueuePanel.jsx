@@ -141,14 +141,14 @@ export default function QueuePanel({ queue, onCancelAll, onCancelJob, onEditFile
                 <>
                   <button
                     className="btn btn-secondary btn-small"
-                    onClick={() => onShowInFolder(job.outputPath)}
+                    onClick={() => onShowInFolder?.(job.outputPath)}
                     title="Open / Download"
                   >
                     📂
                   </button>
                   <button
                     className="btn btn-secondary btn-small"
-                    onClick={() => onEditFile(job.outputPath)}
+                    onClick={() => onEditFile?.(job.outputPath)}
                     title="Edit Metadata"
                   >
                     ✎

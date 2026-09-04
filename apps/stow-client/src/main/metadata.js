@@ -3,16 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const { randomUUID } = require('crypto');
 const { getFfmpegPath } = require('./binaries');
-
-/**
- * Sanitize a string for use in FFmpeg command arguments.
- * Removes or escapes characters that could be used for command injection.
- */
-function sanitizeTagValue(value) {
-  if (typeof value !== 'string') return '';
-  // Remove null bytes and control characters
-  return value.replace(/[\x00-\x1f\x7f]/g, '').trim();
-}
+const { sanitizeTagValue } = require('@stowed/core');
 
 /**
  * Read metadata from an audio file using music-metadata (called from renderer via IPC).
@@ -38,7 +29,7 @@ function writeMetadata(filePath, tags, newThumbnailPath = null) {
     const ext = path.extname(filePath);
     const dir = path.dirname(filePath);
     const baseName = path.basename(filePath, ext);
-    const tempPath = path.join(dir, `${baseName}_temp${ext}`);
+    const tempPath = path.join(dir, `${baseName}_temp_${randomUUID()}${ext}`);
 
     // FFmpeg argument ordering:
     //   ffmpeg [global] -i input0 [-i input1] [output_options] output
