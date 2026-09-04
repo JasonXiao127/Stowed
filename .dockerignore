@@ -1,17 +1,24 @@
+# Build context is the repo root (npm workspaces monorepo).
 node_modules
 dist
 out
 .vite
+**/.vite
+**/dist
+**/out
 bin
 .git
 .gitignore
 *.log
 .env
+.env.vite
 # Local data dirs must never enter the build context (slow builds, and they
 # would bake your queue-state.json/media into the image's build layers).
 downloads
 config
 config-test
 downloads-test
-src/renderer/dist
-src/renderer/.vite
+apps/stowed-web/downloads
+apps/stowed-web/config
+apps/stowed-web/config-test
+apps/stowed-web/downloads-test

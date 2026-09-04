@@ -26,9 +26,9 @@ sudo chown -R 1000:1000 downloads config
 
 ```yaml
 services:
-  stow:
+  stowed-web:
     image: maraudermarauder/stowed:latest
-    container_name: stow
+    container_name: stowed-web
     # ---- Web UI port (edit this ONE line to change it) ----
     x-stow-port: &stow_port 5183
 
@@ -90,15 +90,16 @@ update it if you change that line.)
 
 ### Build from source (optional)
 
-If you cloned this repo or want to change the code, the checked-in
-`docker-compose.yml` includes a `build:` block. Build a local image and run it instead:
+If you cloned this repo or want to change the code, the repo-root
+`docker-compose.yml` includes a `build:` block (context is the repo root, image
+recipe in `apps/stowed-web/Dockerfile`). Build a local image and run it instead:
 
 yt-dlp is installed as the LATEST NIGHTLY build (a pure-Python package from the
 yt-dlp-nightly-builds GitHub release), so it always carries the newest YouTube
 player-client fixes — stable 2026.07.04 failed with `HTTP Error 403: Forbidden`
 on media downloads. It avoids the crash-prone PyInstaller "onefile" binary from
 v1.0.0 (`libz.so.1: failed to map segment from shared object`) and works on any
-CPU architecture. Rebuild with `docker compose build --no-cache stow` to fetch
+CPU architecture. Rebuild with `docker compose build --no-cache stowed-web` to fetch
 a newer nightly.
 
 ```bash
@@ -110,9 +111,9 @@ the compose `image:` is already tagged correctly:
 
 ```bash
 docker login
-docker compose build stow
+docker compose build stowed-web
 docker tag maraudermarauder/stowed:latest maraudermarauder/stowed:1.0.2
-docker compose push stow
+docker compose push stowed-web
 docker push maraudermarauder/stowed:1.0.2
 ```
 
@@ -166,12 +167,14 @@ docker push maraudermarauder/stowed:1.0.2
 
 ### Local development (no Docker)
 
+Run from the repo root (this app lives at `apps/stowed-web` in the Stowed monorepo):
+
 ```bash
 npm install
-npm run build:web     # build the renderer into dist/
+npm run build:web     # build the renderer into apps/stowed-web/dist/
 npm test              # run the queue state-machine unit tests (node --test)
-npm run start:server      # serve UI + API at http://localhost:5183
-# or hot-reload UI:  npm run dev:web  (Vite on :5173)  then  npm run dev:server
+npm run start:web     # serve UI + API at http://localhost:5183
+# or hot-reload UI:  npm run dev:web  (Vite on :5173, proxied by the Node server)
 ```
 
 ## Why Stow?
