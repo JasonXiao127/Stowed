@@ -1,0 +1,11 @@
+node_modules/
+bin/
+dist/
+out/
+*.log
+.env.vite
+.env
+config/
+downloads/
+config-test/
+downloads-test/

@@ -1,11 +1,36 @@
+# Dependencies
 node_modules/
-bin/
+
+# Build outputs
 dist/
 out/
-*.log
-.env.vite
-.env
+.vite/
+apps/*/dist
+apps/*/out
+apps/*/.vite
+apps/*/src/renderer/.vite
+apps/*/src/renderer/dist
+packages/*/dist
+
+# Downloaded binaries (fetch with npm run setup-binaries:*)
+bin/
+apps/*/bin
+
+# Local data dirs (web app volumes)
 config/
 downloads/
 config-test/
 downloads-test/
+apps/stowed-web/config
+apps/stowed-web/downloads
+apps/stowed-web/config-test
+apps/stowed-web/downloads-test
+
+# Env files
+.env
+.env.vite
+apps/*/.env
+apps/*/.env.vite
+
+# Logs
+*.log

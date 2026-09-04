@@ -10,17 +10,19 @@ const { getFfmpegPath } = require('./binaries');
  */
 function sanitizeTagValue(value) {
   if (typeof value !== 'string') return '';
-  // Remove null bytes and control characters, but preserve meaningful leading/
-  // trailing whitespace (some tag values legitimately contain it). A value that
-  // consists only of whitespace is normalized to empty.
-  const cleaned = value.replace(/[\x00-\x1f\x7f]/g, '');
-  return cleaned.trim() === '' ? '' : cleaned;
+  // Remove null bytes and control characters
+  return value.replace(/[\x00-\x1f\x7f]/g, '').trim();
 }
+
+/**
+ * Read metadata from an audio file using music-metadata (called from renderer via IPC).
+ * This is a thin wrapper - the actual reading happens in the renderer's preload bridge.
+ */
 
 /**
  * Write metadata tags to an audio file using FFmpeg.
  * Uses atomic write: writes to a temp file first, then replaces the original.
- *
+ * 
  * @param {string} filePath - Path to the audio file
  * @param {object} tags - Metadata tags { title, artist, album, track, genre, year }
  * @param {string|null} newThumbnailPath - Path to a new thumbnail image, or null to keep existing
@@ -36,7 +38,7 @@ function writeMetadata(filePath, tags, newThumbnailPath = null) {
     const ext = path.extname(filePath);
     const dir = path.dirname(filePath);
     const baseName = path.basename(filePath, ext);
-    const tempPath = path.join(dir, `${baseName}_temp_${randomUUID()}${ext}`);
+    const tempPath = path.join(dir, `${baseName}_temp${ext}`);
 
     // FFmpeg argument ordering:
     //   ffmpeg [global] -i input0 [-i input1] [output_options] output
@@ -83,7 +85,9 @@ function writeMetadata(filePath, tags, newThumbnailPath = null) {
 
     args.push(tempPath);
 
-    const childProc = spawn(ffmpegPath, args);
+    const childProc = spawn(ffmpegPath, args, {
+      windowsHide: true,
+    });
 
     let stderr = '';
 

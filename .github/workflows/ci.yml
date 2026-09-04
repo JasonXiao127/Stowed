@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Web server unit tests
+        run: npm run test:web
+
+      - name: Build web renderer
+        run: npm run build:web
+
+      - name: Smoke-test web server boot
+        run: |
+          STOW_DOWNLOAD_DIR=/tmp/stow-dl STOW_CONFIG_DIR=/tmp/stow-cfg \
+            node apps/stowed-web/server/index.js &
+          SRV=$!
+          for i in $(seq 1 20); do
+            curl -fsS http://localhost:5183/healthz && break
+            sleep 1
+          done
+          curl -fsS http://localhost:5183/healthz
+          kill $SRV
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build web image
+        run: docker build -f apps/stowed-web/Dockerfile -t stowed:ci .

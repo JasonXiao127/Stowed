@@ -1,14 +1,14 @@
 services:
-  stow:
+  stowed-web:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: apps/stowed-web/Dockerfile
     # Published image on Docker Hub: maraudermarauder/stowed
     # If you just want to RUN it (no local build), use `pull_policy: always`
     # (or the stock compose pulls it automatically when no build is needed):
     #   docker compose pull && docker compose up -d
     image: maraudermarauder/stowed:latest
-    container_name: stow
+    container_name: stowed-web
 
     # ---- Web UI port (edit this ONE line to change it) ----
     # End user configures the port right here in the compose file.

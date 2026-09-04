@@ -2,7 +2,12 @@
 FROM node:24-slim AS build
 WORKDIR /app
 
+# Monorepo manifests first (workspace layout must match the lockfile).
 COPY package.json package-lock.json ./
+COPY apps/stowed-web/package.json apps/stowed-web/
+COPY apps/stow-client/package.json apps/stow-client/
+COPY packages/core/package.json packages/core/
+COPY packages/shared-ui/package.json packages/shared-ui/
 RUN npm ci --no-audit --no-fund
 
 COPY . .
@@ -27,7 +32,7 @@ RUN apt-get update \
 # YouTube player-client fixes; stable 2026.07.04 hit "unable to download video
 # data: HTTP Error 403: Forbidden", while nightly 2026.08.18.122307 does not
 # (verified in a live container). To grab a newer nightly on rebuild, use:
-#   docker compose build --no-cache stow
+#   docker compose build --no-cache stowed-web
 # Nightly builds install as a pure-Python package from the yt-dlp-nightly-builds
 # GitHub release tarball, so there is no PyInstaller bootloader (the v1.0.0
 # "libz.so.1: failed to map segment from shared object" crash cannot occur).
@@ -39,11 +44,17 @@ RUN python3 -m pip install --no-cache-dir --break-system-packages \
 
 WORKDIR /app
 COPY package.json package-lock.json ./
+COPY apps/stowed-web/package.json apps/stowed-web/
+COPY apps/stow-client/package.json apps/stow-client/
+COPY packages/core/package.json packages/core/
+COPY packages/shared-ui/package.json packages/shared-ui/
 RUN npm ci --omit=dev --no-audit --no-fund
 
-# Built renderer + server code (node_modules from the runtime stage above).
-COPY --from=build /app/dist ./dist
-COPY --from=build /app/server ./server
+# Built renderer + server code + shared packages (node_modules from the
+# runtime stage above; @stowed/core resolves via the workspace symlink).
+COPY --from=build /app/apps/stowed-web/dist ./apps/stowed-web/dist
+COPY --from=build /app/apps/stowed-web/server ./apps/stowed-web/server
+COPY --from=build /app/packages ./packages
 
 ENV STOW_DOWNLOAD_DIR=/downloads \
     STOW_CONFIG_DIR=/config \
@@ -62,4 +73,4 @@ EXPOSE 5183
 # overrides the effective user with PUID/PGID at runtime, so this is just the
 # default for non-compose runs (e.g. docker run without --user).
 USER node
-CMD ["node", "server/index.js"]
+CMD ["node", "apps/stowed-web/server/index.js"]

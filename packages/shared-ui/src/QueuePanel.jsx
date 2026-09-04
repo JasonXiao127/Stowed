@@ -1,5 +1,14 @@
 import React from 'react';
 
+/**
+ * Shared queue panel for Stow apps.
+ *
+ * Canonical source: the stowed-web variant, which hardens formatSpeed/formatEta
+ * against 'N/A'/'None' strings and takes onShowInFolder as a prop instead of
+ * reaching for window.electronAPI directly (so both the Electron client and
+ * the web UI can use it).
+ */
+
 function getStatusLabel(status) {
   const labels = {
     Pending: 'Pending',
