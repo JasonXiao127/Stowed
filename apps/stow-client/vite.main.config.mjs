@@ -21,6 +21,7 @@ export default defineConfig({
           'download.js',
           'metadata.js',
           'binaries.js',
+          'ytdlpUpdater.js',
         ];
 
         for (const file of filesToCopy) {

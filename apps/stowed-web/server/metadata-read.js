@@ -27,7 +27,7 @@ function readTagsViaFfprobe(filePath) {
 
     let stdout = '';
     let stderrBuf = '';
-    const proc = spawn(ffprobePath, args);
+    const proc = spawn(ffprobePath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
     // Guard against a hung/corrupt file tying up the request forever or an
     // unbounded stdout buffer spiking memory. Tag JSON is tiny; cap generously.
@@ -105,7 +105,7 @@ function readCoverArtViaFfmpeg(filePath) {
     let bytesRead = 0;
     const MAX_BYTES = 25 * 1024 * 1024; // cap extracted cover to avoid OOM
     let stderrBuf = '';
-    const proc = spawn(ffmpegPath, args);
+    const proc = spawn(ffmpegPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
     // Guard against a hung/corrupt file (no output, never closes) and memory spikes.
     const guard = setTimeout(() => safeKill(proc), 30_000);
@@ -252,12 +252,57 @@ async function readMetadata(filePath) {
   }
 
   const { tags, coverArt } = result;
+  let chapters = [];
+  try {
+    chapters = await readChaptersViaFfprobe(filePath);
+  } catch (_) {
+    chapters = [];
+  }
   return {
     tags,
     coverArt: coverArt
       ? { format: coverArt.format, type: coverArt.type }
       : null,
+    chapters,
   };
+}
+
+/**
+ * Read embedded chapters via ffprobe (used by the metadata editor).
+ * Returns [{ start, end, title }] in seconds.
+ */
+function readChaptersViaFfprobe(filePath) {
+  return new Promise((resolve) => {
+    const ffprobePath = getFfprobePath();
+    const args = ['-v', 'quiet', '-print_format', 'json', '-show_chapters', filePath];
+    let stdout = '';
+    const proc = spawn(ffprobePath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const guard = setTimeout(() => safeKill(proc), 15000);
+    proc.stdout.on('data', (d) => {
+      stdout += d.toString();
+      if (stdout.length > 256 * 1024) safeKill(proc);
+    });
+    proc.stderr.on('data', () => {});
+    proc.on('close', (code) => {
+      clearTimeout(guard);
+      if (code !== 0) return resolve([]);
+      try {
+        const parsed = JSON.parse(stdout);
+        const list = Array.isArray(parsed.chapters) ? parsed.chapters : [];
+        resolve(list.slice(0, 100).map((c) => ({
+          start: Number(c.start_time ?? c.start ?? 0),
+          end: Number(c.end_time ?? c.end ?? 0),
+          title: String((c.tags && (c.tags.title || c.tags.TITLE)) || ''),
+        })).filter((c) => Number.isFinite(c.start) && Number.isFinite(c.end)));
+      } catch (_) {
+        resolve([]);
+      }
+    });
+    proc.on('error', () => {
+      clearTimeout(guard);
+      resolve([]);
+    });
+  });
 }
 
 /**

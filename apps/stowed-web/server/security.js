@@ -15,7 +15,7 @@ const config = require('./config');
  */
 
 const AUDIO_EXTENSIONS = new Set([
-  '.opus', '.ogg', '.mp3', '.m4a', '.flac', '.wav', '.webm', '.aac',
+  '.opus', '.ogg', '.oga', '.mp3', '.m4a', '.flac', '.wav', '.webm', '.aac',
 ]);
 
 function isAudioFile(filePath) {
@@ -236,9 +236,12 @@ function hostGuard(req, res, next) {
  *
  * Stow is a downloader, so it inherently fetches arbitrary URLs (SSRF). We
  * shrink that surface by (a) only allowing http(s) for anything that looks
- * like a URL, and (b) rejecting literal loopback/private/link-local/reserved
- * IP targets (cloud metadata, routers, other LAN hosts) unless the operator
- * opts out with STOW_ALLOW_PRIVATE_IP_URLS=1.
+ * like a URL (including http(s) targets written without "//", which URL
+ * parsers and yt-dlp still treat as fetch targets), and (b) rejecting literal
+ * loopback/private/link-local/reserved IP targets (cloud metadata, routers,
+ * other LAN hosts) unless the operator opts out with STOW_ALLOW_PRIVATE_IP_URLS=1.
+ * IPv6 transition forms (mapped/translated/compatible/NAT64/6to4/Teredo)
+ * carrying a private IPv4 address are rejected via byte-level classification.
  *
  * Scheme-less strings (bare YouTube IDs, "ytsearch:...") pass through — yt-dlp
  * can only interpret those as YouTube lookups, so they create no fetch target.
@@ -252,7 +255,25 @@ function validateDownloadUrl(input) {
   const s = input.trim();
   if (s.length === 0) return 'empty';
 
-  if (!s.includes('://')) return null; // bare ID / search query
+  // Anything without "://" is a bare ID / search query — except http(s) URLs
+  // written without slashes (e.g. "http:169.254.169.254"), which WHATWG URL
+  // parsing (and yt-dlp) still treat as real fetch targets. Any other
+  // "scheme:" prefix (file:, ftp:, javascript:, data:, ...) must also be
+  // validated so it cannot bypass the http(s)-only check. Known yt-dlp
+  // search prefixes (ytsearch10:, ytmusicsearch:, scsearch:, ...) remain
+  // pass-through since yt-dlp resolves them to YouTube lookups.
+  const schemeMatch = s.match(/^([a-zA-Z][a-zA-Z0-9+.-]*):/);
+  if (schemeMatch && !s.includes('://')) {
+    const scheme = schemeMatch[1].toLowerCase();
+    if (/^(ytsearch|ytmusicsearch|scsearch|soundcloudsearch|bandcampsearch)[a-z0-9]*$/.test(scheme)) return null;
+    if (!/^https?$/.test(scheme)) {
+      // Fall through to URL validation below, which rejects non-http(s).
+    } else {
+      // http: without "//" — fall through to validation (private-IP check applies).
+    }
+  } else if (!s.includes('://')) {
+    return null;
+  }
 
   let parsed;
   try {
@@ -266,7 +287,9 @@ function validateDownloadUrl(input) {
   }
 
   if (!config.allowPrivateIpUrls) {
-    const hostname = parsed.hostname.replace(/^\[|\]$/g, '');
+    let hostname = parsed.hostname.replace(/^\[|\]$/g, '');
+    // A trailing dot ("localhost.") does not change the target.
+    if (!hostname.includes(':')) hostname = hostname.replace(/\.+$/, '');
     if (hostname.toLowerCase() === 'localhost' || isPrivateIpLiteral(hostname)) {
       return `target "${parsed.host}" is a local/private/reserved address`;
     }
@@ -278,12 +301,17 @@ function validateDownloadUrl(input) {
 /**
  * True if the string is an IP literal (v4 or v6) in a private, loopback,
  * link-local, CGNAT, multicast, or reserved range — the classic SSRF targets.
+ *
+ * IPv6 is normalized to bytes before classification: Node's URL parser emits
+ * compressed hex (e.g. "[::ffff:127.0.0.1]" becomes "::ffff:7f00:1"), so
+ * string-prefix checks alone miss IPv4-mapped / compatible / NAT64 / 6to4 /
+ * Teredo forms that still route to a private IPv4 address.
  */
 function isPrivateIpLiteral(hostname) {
-  // Unwrap IPv4-mapped IPv6 (e.g. ::ffff:127.0.0.1) to the v4 check.
   let h = hostname.toLowerCase();
-  if (h.startsWith('::ffff:0:')) h = h.slice(9);
-  else if (h.startsWith('::ffff:')) h = h.slice(7);
+  // Strip a zone id ("%eth0") if one ever arrives unparsed.
+  const zone = h.indexOf('%');
+  if (zone !== -1) h = h.slice(0, zone);
 
   const kind = net.isIP(h);
   if (kind === 4) return isPrivateIPv4(h.split('.').map(Number));
@@ -318,19 +346,90 @@ function isPrivateIPv4(o) {
   );
 }
 
+/**
+ * Expand a validated IPv6 literal to its 16 bytes. Handles "::" compression
+ * and an embedded dotted-quad tail (e.g. "::ffff:1.2.3.4"). Returns null when
+ * the literal does not parse.
+ */
+function expandIPv6(addr) {
+  const clean = addr.toLowerCase();
+  const halves = clean.split('::');
+  if (halves.length > 2) return null;
+  const parsePart = (part) => {
+    const groups = [];
+    if (part === '') return groups;
+    for (const g of part.split(':')) {
+      if (g.includes('.')) {
+        const q = g.split('.');
+        if (q.length !== 4) return null;
+        const nums = q.map(Number);
+        if (nums.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return null;
+        groups.push((nums[0] << 8) | nums[1], (nums[2] << 8) | nums[3]);
+      } else {
+        if (g.length === 0 || g.length > 4) return null;
+        const n = parseInt(g, 16);
+        if (!Number.isInteger(n) || n < 0 || n > 0xffff) return null;
+        groups.push(n);
+      }
+    }
+    return groups;
+  };
+  const head = parsePart(halves[0]);
+  if (!head) return null;
+  if (halves.length === 1) {
+    if (head.length !== 8) return null;
+    return head.flatMap((g) => [(g >>> 8) & 0xff, g & 0xff]);
+  }
+  const tail = parsePart(halves[1]);
+  if (!tail || head.length + tail.length > 8) return null;
+  const full = [...head, ...new Array(8 - head.length - tail.length).fill(0), ...tail];
+  return full.flatMap((g) => [(g >>> 8) & 0xff, g & 0xff]);
+}
+
 function isPrivateIPv6(addr) {
-  const lower = addr.toLowerCase();
+  const b = expandIPv6(addr);
+  // Fail closed: something net.isIP accepted but we cannot expand.
+  if (!b) return true;
+  const zero = (from, to) => {
+    for (let i = from; i < to; i++) if (b[i] !== 0) return false;
+    return true;
+  };
+  const embeddedV4 = [b[12], b[13], b[14], b[15]];
+
+  // First 80 bits zero (::/96): IPv4-mapped (::ffff:w.x.y.z),
+  // IPv4-translated (::ffff:0:w.x.y.z, SIIT), and IPv4-compatible (::w.x.y.z)
+  // forms all carry the target IPv4 address in the last 32 bits.
+  // ("::" and "::1" also land here and are correctly classified.)
+  if (zero(0, 10)) {
+    return isPrivateIPv4(embeddedV4);
+  }
+  // IPv4-translated ::ffff:0:w.x.y.z/96 (SIIT) — v4 address in last 32 bits.
+  if (zero(0, 8) && b[8] === 0xff && b[9] === 0xff) {
+    return isPrivateIPv4(embeddedV4);
+  }
+  // 6to4 2002::/16 — bytes 2..5 are the embedded IPv4 address.
+  if (b[0] === 0x20 && b[1] === 0x02) {
+    return isPrivateIPv4([b[2], b[3], b[4], b[5]]);
+  }
+  // Teredo 2001::/32 — client IPv4 is bitwise-NOTed into the last 32 bits.
+  if (b[0] === 0x20 && b[1] === 0x01 && b[2] === 0x00 && b[3] === 0x00) {
+    return isPrivateIPv4(embeddedV4.map((o) => (~o) & 0xff));
+  }
+  // NAT64 well-known prefix 64:ff9b::/96 — last 32 bits are the IPv4 address.
+  if (b[0] === 0x00 && b[1] === 0x64 && b[2] === 0xff && b[3] === 0x9b && zero(4, 10)) {
+    return isPrivateIPv4(embeddedV4);
+  }
+  // ISATAP ::0:5efe:w.x.y.z — last 32 bits are the embedded IPv4 address.
+  if (zero(8, 10) && b[10] === 0x5e && b[11] === 0xfe) {
+    return isPrivateIPv4(embeddedV4);
+  }
+
   return (
-    lower === '::' ||                                   // unspecified
-    lower === '::1' ||                                  // loopback
-    lower.startsWith('fe8') ||                          // fe80::/10 link-local
-    lower.startsWith('fe9') ||
-    lower.startsWith('fea') ||
-    lower.startsWith('feb') ||
-    lower.startsWith('fc') ||                           // fc00::/7 ULA
-    lower.startsWith('fd') ||
-    lower.startsWith('ff') ||                           // multicast
-    lower.startsWith('2001:db8')                        // documentation
+    (b[0] === 0xfe && (b[1] & 0xc0) === 0x80) ||  // fe80::/10 link-local
+    (b[0] === 0xfe && (b[1] & 0xc0) === 0xc0) ||  // fec0::/10 site-local (deprecated)
+    (b[0] & 0xfe) === 0xfc ||                     // fc00::/7 ULA
+    b[0] === 0xff ||                              // ff00::/8 multicast
+    (b[0] === 0x20 && b[1] === 0x01 && b[2] === 0x0d && b[3] === 0xb8) // 2001:db8::/32 documentation
   );
 }
 
@@ -352,7 +451,7 @@ function createRateLimiter({ windowMs = 60_000, max = 60 } = {}) {
   const prune = setInterval(() => {
     const now = Date.now();
     for (const [key, entry] of hits) {
-      if (now - entry.resetAt > windowMs) hits.delete(key);
+      if (now >= entry.resetAt) hits.delete(key);
     }
   }, Math.max(windowMs, 1000));
   if (prune.unref) prune.unref();
@@ -361,7 +460,7 @@ function createRateLimiter({ windowMs = 60_000, max = 60 } = {}) {
     const now = Date.now();
     const key = clientKey(req);
     const entry = hits.get(key);
-    if (!entry || now - entry.resetAt >= windowMs) {
+    if (!entry || now >= entry.resetAt) {
       hits.set(key, { count: 1, resetAt: now + windowMs });
       return { allowed: true, retryAfter: 0 };
     }
@@ -394,7 +493,7 @@ function createFailureLimiter({ windowMs = 60_000, max = 8 } = {}) {
   const prune = setInterval(() => {
     const now = Date.now();
     for (const [key, entry] of fails) {
-      if (now - entry.resetAt > windowMs) fails.delete(key);
+      if (now >= entry.resetAt) fails.delete(key);
     }
   }, Math.max(windowMs, 1000));
   if (prune.unref) prune.unref();
@@ -403,7 +502,7 @@ function createFailureLimiter({ windowMs = 60_000, max = 8 } = {}) {
     const now = Date.now();
     const key = clientKey(req);
     const entry = fails.get(key);
-    if (!entry || now - entry.resetAt >= windowMs) {
+    if (!entry || now >= entry.resetAt) {
       fails.set(key, { count: 1, resetAt: now + windowMs });
       return { blocked: false, retryAfter: 0 };
     }
@@ -416,7 +515,7 @@ function createFailureLimiter({ windowMs = 60_000, max = 8 } = {}) {
 }
 
 // Instance limits, exported so middleware can mount them.
-const apiRateLimit = createRateLimiter({ windowMs: 60_000, max: 240 });
+const apiRateLimit = createRateLimiter({ windowMs: 60_000, max: 600 });
 const mutatingRateLimit = createRateLimiter({ windowMs: 60_000, max: 40 });
 const authFailureLimiter = createFailureLimiter({ windowMs: 60_000, max: 8 });
 

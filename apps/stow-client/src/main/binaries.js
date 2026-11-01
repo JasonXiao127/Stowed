@@ -2,7 +2,16 @@ const path = require('path');
 const fs = require('fs');
 const { app } = require('electron');
 
-function getBinDir() {
+function getUserBinDir() {
+  const platform = process.platform === 'win32' ? 'win32' : process.platform === 'darwin' ? 'darwin' : 'linux';
+  try {
+    return path.join(app.getPath('userData'), 'bin', platform);
+  } catch (_) {
+    return null;
+  }
+}
+
+function getBundledBinDir() {
   const platform = process.platform === 'win32' ? 'win32' : process.platform === 'darwin' ? 'darwin' : 'linux';
   if (app.isPackaged) {
     // In production, binaries are in the app resources
@@ -10,6 +19,33 @@ function getBinDir() {
   }
   // In development, binaries are in the project's bin directory
   return path.join(__dirname, '..', '..', 'bin', platform);
+}
+
+function getBinDir() {
+  // yt-dlp may live in userData/bin (writable nightly updates); everything
+  // else (ffmpeg/ffprobe/deno) must resolve to the bundled resources dir so
+  // an updated yt-dlp can never shadow them.
+  const platform = process.platform === 'win32' ? 'win32' : process.platform === 'darwin' ? 'darwin' : 'linux';
+  try {
+    const userDir = path.join(app.getPath('userData'), 'bin', platform);
+    const ext = process.platform === 'win32' ? '.exe' : '';
+    if (fs.existsSync(path.join(userDir, `yt-dlp${ext}`))) return userDir;
+  } catch (_) {}
+  return getBundledBinDir();
+}
+
+function getDenoPath() {
+  const bundled = getBundledBinDir();
+  const ext = process.platform === 'win32' ? '.exe' : '';
+  const denoPath = path.join(bundled, `deno${ext}`);
+  if (fs.existsSync(denoPath)) return denoPath;
+  return null;
+}
+
+function getJsRuntime() {
+  // Prefer the bundled Deno; fall back to Node (bundled with Electron).
+  if (getDenoPath()) return 'deno';
+  return 'node';
 }
 
 function getYtDlpPath() {
@@ -27,7 +63,7 @@ function getYtDlpPath() {
 }
 
 function getFfmpegPath() {
-  const binDir = getBinDir();
+  const binDir = getBundledBinDir();
   const ext = process.platform === 'win32' ? '.exe' : '';
   const ffmpegPath = path.join(binDir, `ffmpeg${ext}`);
 
@@ -41,9 +77,9 @@ function getFfmpegPath() {
 }
 
 function getFfprobePath() {
-  const binDir = getBinDir();
+  const binDir = getBundledBinDir();
   const ext = process.platform === 'win32' ? '.exe' : '';
   return path.join(binDir, `ffprobe${ext}`);
 }
 
-module.exports = { getYtDlpPath, getFfmpegPath, getFfprobePath, getBinDir };
+module.exports = { getYtDlpPath, getFfmpegPath, getFfprobePath, getBinDir, getBundledBinDir, getUserBinDir, getDenoPath, getJsRuntime };

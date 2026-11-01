@@ -1,0 +1,74 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e5]: Stow
+    - generic [ref=e12]:
+      - button "Settings" [ref=e14] [cursor=pointer]
+      - button "Switch to dark theme" [ref=e19] [cursor=pointer]:
+        - generic [aria-hidden] [ref=e20]: 🌙
+        - generic [ref=e21]: Dark
+  - main [ref=e22]:
+    - generic [ref=e25]:
+      - textbox "YouTube URLs, one per line" [ref=e26]:
+        - /placeholder: Paste YouTube URLs here (one per line)...
+      - button "Download All" [disabled] [ref=e27]
+    - region "Download queue" [ref=e28]:
+      - generic [ref=e29]:
+        - heading "Downloads (1)" [level=2] [ref=e30]
+        - button "Clear All" [ref=e31] [cursor=pointer]
+      - heading "Completed" [level=3] [ref=e32]
+      - generic [ref=e34]:
+        - generic [ref=e35]:
+          - generic "Rick Astley - Never Gonna Give You Up (Official Video) (4K Remaster)" [ref=e36]
+          - generic "https://www.youtube.com/watch?v=dQw4w9WgXcQ" [ref=e37]:
+            - text: Rick Astley · 3:33
+            - generic "https://www.youtube.com/watch?v=dQw4w9WgXcQ" [ref=e38]: YouTube
+          - generic "https://www.youtube.com/watch?v=dQw4w9WgXcQ" [ref=e39]
+          - generic [ref=e40]: Complete
+        - generic [ref=e44]:
+          - button "Play Rick Astley - Never Gonna Give You Up (Official Video) (4K Remaster) [dQw4w9WgXcQ].opus" [ref=e45] [cursor=pointer]: ▶
+          - button "Download Rick Astley - Never Gonna Give You Up (Official Video) (4K Remaster) [dQw4w9WgXcQ].opus" [ref=e46] [cursor=pointer]: 📂
+          - button "Edit metadata for Rick Astley - Never Gonna Give You Up (Official Video) (4K Remaster) [dQw4w9WgXcQ].opus" [ref=e47] [cursor=pointer]: ✎
+    - region "Preview links" [ref=e48]:
+      - generic [ref=e49]:
+        - heading "Preview" [level=2] [ref=e50]
+        - generic [ref=e51]: Single video or playlist — nothing downloads yet
+      - generic [ref=e52]:
+        - textbox "Preview URL" [ref=e53]:
+          - /placeholder: Paste a YouTube / SoundCloud / Bandcamp link to preview…
+        - button "Preview" [disabled] [ref=e54]
+    - region "Downloaded files" [ref=e55]:
+      - generic [ref=e56]:
+        - heading "Library" [level=2] [ref=e57]
+        - generic "/downloads" [ref=e63]: Showing 2 of 2
+        - group "Library view" [ref=e58]:
+          - button "List" [ref=e59] [cursor=pointer]
+          - button "Grid" [active] [pressed] [ref=e60] [cursor=pointer]
+      - generic [ref=e81]:
+        - textbox "Search library" [ref=e82]:
+          - /placeholder: Search title, artist, album…
+        - combobox "Sort library" [ref=e83]:
+          - option "Name" [selected]
+          - option "Artist"
+          - option "Album"
+          - option "Year"
+          - option "Duration"
+        - button "Sort order ascending, activate to toggle" [ref=e84] [cursor=pointer]: ↑
+      - list [ref=e85]:
+        - listitem [ref=e86]:
+          - button "Play PSY - GANGNAM STYLE(강남스타일) M/V" [ref=e87] [cursor=pointer]:
+            - generic [aria-hidden] [ref=e88]: ▶
+          - generic [ref=e89]:
+            - generic "PSY - GANGNAM STYLE(강남스타일) M/V" [ref=e90]
+            - generic "officialpsy —" [ref=e91]: officialpsy
+          - generic [ref=e92]:
+            - button "Edit" [ref=e93] [cursor=pointer]
+            - button "Download PSY - GANGNAM STYLE(강남스타일) M/V" [ref=e94] [cursor=pointer]
+        - listitem [ref=e97]:
+          - button "Play Rick Astley - Never Gonna Give You Up (Official Video) (4K Remaster)" [ref=e98] [cursor=pointer]:
+            - generic [aria-hidden] [ref=e99]: ▶
+          - generic [ref=e100]:
+            - generic "Rick Astley - Never Gonna Give You Up (Official Video) (4K Remaster)" [ref=e101]
+            - generic "Rick Astley —" [ref=e102]: Rick Astley
+          - generic [ref=e103]:
+            - button "Edit" [ref=e104] [cursor=pointer]
+            - button "Download Rick Astley - Never Gonna Give You Up (Official Video) (4K Remaster)" [ref=e105] [cursor=pointer]

@@ -65,6 +65,24 @@ app.whenReady().then(() => {
   createWindow();
   downloadManager.resume();
 
+  // Rolling nightly check (24h cadence + launch). Skips while downloading;
+  // failures are silent so offline launches are unaffected.
+  try {
+    const updater = require('./ytdlpUpdater');
+    const doCheck = async () => {
+      try {
+        if (downloadManager.currentJob) return;
+        const info = await updater.checkForUpdate();
+        if (info.updateAvailable && !downloadManager.currentJob) {
+          await updater.performUpdate();
+        }
+      } catch (_) {}
+    };
+    setTimeout(doCheck, 30_000);
+    setInterval(doCheck, 24 * 60 * 60 * 1000);
+    if (global.gc) global.gc();
+  } catch (_) {}
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();

@@ -3,7 +3,106 @@ const path = require('path');
 const fs = require('fs');
 const { randomUUID } = require('crypto');
 const { getFfmpegPath } = require('./binaries');
-const { sanitizeTagValue } = require('@stowed/core');
+const { sanitizeTagValue, rewriteOggComments, detectImageMime, validateCoverArt } = require('@stowed/core');
+
+function isOggContainer(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  return ext === '.opus' || ext === '.ogg' || ext === '.oga';
+}
+
+// Containers the FFmpeg write path can actually attach a picture to (MJPEG
+// video stream). WAV / raw AAC cannot carry video; WebM rejects MJPEG.
+// Ogg-family files never reach ffmpeg (native Vorbis-comment path instead).
+function canEmbedCover(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  return ['.mp3', '.m4a', '.mp4', '.flac', '.opus', '.ogg', '.oga'].includes(ext);
+}
+
+// Image MIME types accepted for cover writes. validateCoverArt() accepts
+// unknown byte patterns with a warning (needed for tolerant reads), but a
+// write must never embed unidentified bytes or an "unknown" MIME label.
+const WRITABLE_IMAGE_MIMES = new Set([
+  'image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/bmp',
+]);
+
+function atomicReplace(tempPath, filePath) {
+  if (process.platform === 'win32') {
+    const backupPath = `${filePath}.backup-${randomUUID()}`;
+    fs.renameSync(filePath, backupPath);
+    try {
+      fs.renameSync(tempPath, filePath);
+    } catch (replaceErr) {
+      if (!fs.existsSync(filePath) && fs.existsSync(backupPath)) {
+        fs.renameSync(backupPath, filePath);
+      }
+      throw replaceErr;
+    }
+    try {
+      fs.unlinkSync(backupPath);
+    } catch (cleanupErr) {
+      console.warn('Failed to remove metadata backup:', cleanupErr.message);
+    }
+  } else {
+    fs.renameSync(tempPath, filePath);
+  }
+}
+
+function safeUnlink(p) {
+  try {
+    if (p && fs.existsSync(p)) fs.unlinkSync(p);
+  } catch (_) {
+    // best effort cleanup
+  }
+}
+
+/**
+ * Write tags (and optionally a cover) to an Ogg Opus / Ogg Vorbis file with
+ * a pure-JS Vorbis-comment editor. FFmpeg cannot mux an attached picture into
+ * Ogg and its global -metadata does not update existing stream comments, so
+ * Ogg files must not go through the FFmpeg path. Audio is untouched and any
+ * existing METADATA_BLOCK_PICTURE cover is preserved unless a replacement
+ * image is given.
+ */
+function writeOggMetadata(filePath, tags, newThumbnailPath) {
+  let imageData = null;
+  let imageMime = null;
+  if (newThumbnailPath) {
+    if (!fs.existsSync(newThumbnailPath)) {
+      throw new Error(`Thumbnail file not found: ${newThumbnailPath}`);
+    }
+    imageData = fs.readFileSync(newThumbnailPath);
+    const validation = validateCoverArt(imageData, null);
+    if (!validation.valid) {
+      throw new Error(`Invalid image: ${validation.reason || 'unsupported format'}`);
+    }
+    imageMime = validation.format || detectImageMime(imageData);
+    if (!WRITABLE_IMAGE_MIMES.has(imageMime)) {
+      throw new Error('Invalid image: unsupported image format');
+    }
+  }
+  // Same sanitizing as the FFmpeg path: strip control characters (incl. NUL)
+  // so they can never land in a Vorbis comment.
+  const cleanTags = {};
+  for (const key of ['title', 'artist', 'album', 'track', 'genre', 'year']) {
+    cleanTags[key] = sanitizeTagValue(tags?.[key]);
+  }
+  const original = fs.readFileSync(filePath);
+  const updated = rewriteOggComments(original, cleanTags, imageData
+    ? { coverImage: imageData, coverMime: imageMime }
+    : {});
+  const dir = path.dirname(filePath);
+  const ext = path.extname(filePath);
+  const baseName = path.basename(filePath, ext);
+  const tempPath = path.join(dir, `${baseName}_temp_${randomUUID()}${ext}`);
+  try {
+    fs.writeFileSync(tempPath, updated);
+    atomicReplace(tempPath, filePath);
+  } catch (err) {
+    safeUnlink(tempPath);
+    throw err;
+  }
+  return filePath;
+}
 
 /**
  * Read metadata from an audio file using music-metadata (called from renderer via IPC).
@@ -23,6 +122,25 @@ function writeMetadata(filePath, tags, newThumbnailPath = null) {
   return new Promise((resolve, reject) => {
     if (!fs.existsSync(filePath)) {
       return reject(new Error(`File not found: ${filePath}`));
+    }
+
+    // Ogg Opus / Ogg Vorbis files are handled natively: FFmpeg can neither
+    // embed an attached picture into Ogg nor reliably update existing
+    // Vorbis comments via global -metadata, so it must not be used here.
+    if (isOggContainer(filePath)) {
+      try {
+        const result = writeOggMetadata(filePath, tags, newThumbnailPath);
+        resolve(result);
+      } catch (err) {
+        reject(err);
+      }
+      return;
+    }
+
+    if (newThumbnailPath && !canEmbedCover(filePath)) {
+      return reject(new Error(
+        `Cover art cannot be embedded in ${path.extname(filePath) || 'this file'} files`
+      ));
     }
 
     const ffmpegPath = getFfmpegPath();
@@ -91,49 +209,25 @@ function writeMetadata(filePath, tags, newThumbnailPath = null) {
         // Replace the original while keeping a recovery path on Windows,
         // where renameSync cannot overwrite an existing destination.
         try {
-          if (process.platform === 'win32') {
-            const backupPath = `${filePath}.backup-${randomUUID()}`;
-            fs.renameSync(filePath, backupPath);
-            try {
-              fs.renameSync(tempPath, filePath);
-            } catch (replaceErr) {
-              if (!fs.existsSync(filePath) && fs.existsSync(backupPath)) {
-                fs.renameSync(backupPath, filePath);
-              }
-              throw replaceErr;
-            }
-            try {
-              fs.unlinkSync(backupPath);
-            } catch (cleanupErr) {
-              console.warn('Failed to remove metadata backup:', cleanupErr.message);
-            }
-          } else {
-            fs.renameSync(tempPath, filePath);
-          }
+          atomicReplace(tempPath, filePath);
           resolve(filePath);
         } catch (err) {
           // Clean up temp file on failure
-          if (fs.existsSync(tempPath)) {
-            fs.unlinkSync(tempPath);
-          }
+          safeUnlink(tempPath);
           reject(new Error(`Failed to replace original file: ${err.message}`));
         }
       } else {
         // Clean up temp file on failure
-        if (fs.existsSync(tempPath)) {
-          fs.unlinkSync(tempPath);
-        }
+        safeUnlink(tempPath);
         reject(new Error(`FFmpeg exited with code ${code}: ${stderr}`));
       }
     });
 
     childProc.on('error', (err) => {
-      if (fs.existsSync(tempPath)) {
-        fs.unlinkSync(tempPath);
-      }
+      safeUnlink(tempPath);
       reject(new Error(`Failed to start FFmpeg: ${err.message}`));
     });
   });
 }
 
-module.exports = { writeMetadata, sanitizeTagValue };
+module.exports = { writeMetadata, sanitizeTagValue, canEmbedCover, isOggContainer };

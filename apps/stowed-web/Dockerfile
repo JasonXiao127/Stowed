@@ -8,7 +8,7 @@ COPY apps/stowed-web/package.json apps/stowed-web/
 COPY apps/stow-client/package.json apps/stow-client/
 COPY packages/core/package.json packages/core/
 COPY packages/shared-ui/package.json packages/shared-ui/
-RUN npm ci --no-audit --no-fund
+RUN npm ci --no-audit --no-fund && npm install --no-save --no-audit --no-fund @rollup/rollup-linux-x64-gnu || true
 
 COPY . .
 RUN npm run build:web && rm -rf node_modules
@@ -36,11 +36,17 @@ RUN apt-get update \
 # Nightly builds install as a pure-Python package from the yt-dlp-nightly-builds
 # GitHub release tarball, so there is no PyInstaller bootloader (the v1.0.0
 # "libz.so.1: failed to map segment from shared object" crash cannot occur).
-# curl_cffi enables browser impersonation for the YouTube player clients.
+# The `default` extra pulls yt-dlp-ejs (bundled JS challenge solver),
+# curl_cffi (browser impersonation), mutagen, and friends — no runtime
+# `--remote-components ejs:github` fetch is needed.
 # --break-system-packages is required for Debian's externally-managed Python.
+# YTDLP_TARBALL optionally pins a specific nightly/stable tarball;
+# default "latest" keeps the rolling nightly.
+ARG YTDLP_TARBALL=https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp.tar.gz
 RUN python3 -m pip install --no-cache-dir --break-system-packages \
-      "yt-dlp@https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp.tar.gz" \
-      "curl_cffi" "mutagen" "pycryptodomex" "brotli"
+      "yt-dlp[default,curl-cffi] @ ${YTDLP_TARBALL}" \
+      "pycryptodomex" "brotli" \
+ && python3 -c "import yt_dlp; print('yt-dlp', yt_dlp.version.__version__)"
 
 WORKDIR /app
 COPY package.json package-lock.json ./

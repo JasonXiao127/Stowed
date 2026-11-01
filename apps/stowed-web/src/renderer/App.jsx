@@ -1,37 +1,90 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { useTheme, UrlInput, QueuePanel } from '@stowed/shared-ui';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useTheme, UrlInput, QueuePanel, SettingsIcon, SunIcon, MoonIcon, XIcon, NoteIcon } from '@stowed/shared-ui';
 import MetadataEditor from './components/MetadataEditor';
-import FileBrowser from './components/FileBrowser';
+import Library from './components/Library';
+import InspectPanel from './components/InspectPanel';
+import SettingsPanel from './components/SettingsPanel';
+import PlayerBar from './components/PlayerBar';
 import api from './api';
+
+let toastId = 0;
 
 export default function App() {
   const { theme, toggleTheme } = useTheme();
   const [queue, setQueue] = useState([]);
   const [selectedFile, setSelectedFile] = useState(null);
   const [showMetadata, setShowMetadata] = useState(false);
-  const [showFileBrowser, setShowFileBrowser] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [clearing, setClearing] = useState(false);
-  const [toast, setToast] = useState(null);
+  const [toasts, setToasts] = useState([]);
   const [apiKeyInput, setApiKeyInput] = useState(api.getApiKey());
+  const [libraryKey, setLibraryKey] = useState(0);
+  const [nowPlaying, setNowPlaying] = useState(null);
+  const timersRef = useRef(new Map());
+  const settingsInputRef = useRef(null);
 
-  // Guard against a non-array queue (e.g. if the API proxy returns the HTML
-  // shell instead of JSON). Rendering a string would make QueuePanel call
-  // .map() on it and crash the whole app, blanking the UI.
   const toArr = (value) => (Array.isArray(value) ? value : []);
 
+  const dismissToast = useCallback((id) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+    const timer = timersRef.current.get(id);
+    if (timer) {
+      clearTimeout(timer);
+      timersRef.current.delete(id);
+    }
+  }, []);
+
   const showToast = useCallback((message, type = 'success') => {
-    setToast({ message, type });
-    setTimeout(() => setToast(null), 3000);
+    const id = ++toastId;
+    setToasts((prev) => [...prev.slice(-2), { id, message, type }]);
+    const timer = setTimeout(() => dismissToast(id), 4000);
+    timersRef.current.set(id, timer);
+  }, [dismissToast]);
+
+  useEffect(() => {
+    const timers = timersRef.current;
+    return () => {
+      timers.forEach((t) => clearTimeout(t));
+      timers.clear();
+    };
   }, []);
 
-  // Load initial queue state
   useEffect(() => {
-    api.getQueue().then((q) => setQueue(toArr(q))).catch(console.error);
-  }, []);
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      if (showClearConfirm) setShowClearConfirm(false);
+      else if (showSettings) setShowSettings(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showClearConfirm, showSettings]);
 
-  // Listen for queue updates from main process
+  const settingsButtonRef = useRef(null);
+  const wasSettingsOpen = useRef(false);
   useEffect(() => {
+    if (showSettings) {
+      wasSettingsOpen.current = true;
+      const t = setTimeout(() => settingsInputRef.current?.focus?.(), 50);
+      return () => clearTimeout(t);
+    } else if (wasSettingsOpen.current) {
+      wasSettingsOpen.current = false;
+      settingsButtonRef.current?.focus?.();
+    }
+  }, [showSettings]);
+
+  useEffect(() => {
+    api.getQueue().then((q) => setQueue(toArr(q))).catch((err) => {
+      console.error(err);
+      showToast('Failed to load queue', 'error');
+    });
+  }, [showToast]);
+
+  useEffect(() => {
+    const cleanupAuth = api.onAuthRejected ? api.onAuthRejected(() => {
+      showToast('API key rejected — re-enter it in Settings', 'error');
+    }) : () => {};
+
     const cleanupQueue = api.onQueueUpdated((updatedQueue) => {
       setQueue(toArr(updatedQueue));
     });
@@ -40,21 +93,34 @@ export default function App() {
       setQueue((prev) =>
         prev.map((job) =>
           job.id === progress.id
-            ? { ...job, progress: progress.progress, speed: progress.speed, eta: progress.eta }
+            ? {
+                ...job,
+                progress: progress.progress ?? job.progress,
+                downloadedBytes: progress.downloadedBytes ?? job.downloadedBytes,
+                totalBytes: progress.totalBytes ?? job.totalBytes,
+                speed: progress.speed ?? job.speed,
+                eta: progress.eta ?? job.eta,
+                elapsed: progress.elapsed ?? job.elapsed,
+                stage: progress.stage || job.stage,
+                status: progress.status || job.status,
+              }
             : job
         )
       );
     });
 
     const cleanupComplete = api.onDownloadComplete((result) => {
-      showToast(`Download complete: ${result.outputPath}`, 'success');
+      showToast(`Downloaded ${(result.outputPath || '').split('/').pop()}`, 'success');
+      setLibraryKey((k) => k + 1);
     });
 
     const cleanupAllDone = api.onAllDownloadsComplete(() => {
-      showToast('All downloads complete!', 'success');
+      showToast('All downloads finished', 'success');
+      setLibraryKey((k) => k + 1);
     });
 
     return () => {
+      cleanupAuth();
       cleanupQueue();
       cleanupProgress();
       cleanupComplete();
@@ -66,7 +132,7 @@ export default function App() {
     try {
       const result = await api.startDownloads(urls);
       if (result && result.skipped > 0) {
-        showToast(`Skipped ${result.skipped} duplicate(s) — URL(s) already in the active download queue (not a program error)`, 'warning');
+        showToast(`Skipped ${result.skipped} duplicate(s) — already in the queue`, 'warning');
       }
     } catch (err) {
       showToast(`Failed to start downloads: ${err.message}`, 'error');
@@ -92,22 +158,21 @@ export default function App() {
           const results = await api.deleteFiles(paths);
           const deleted = results.filter((r) => r.deleted).length;
           const failed = results.filter((r) => !r.deleted).length;
-          if (deleted > 0) {
+          if (deleted > 0 && failed === 0) {
             showToast(`Deleted ${deleted} audio file(s)`, 'success');
-          }
-          if (failed > 0) {
+          } else if (deleted > 0) {
+            showToast(`Deleted ${deleted} file(s), ${failed} could not be deleted`, 'warning');
+          } else if (failed > 0) {
             showToast(`${failed} file(s) could not be deleted`, 'warning');
           }
         }
       }
       await api.cancelDownloads();
+      setQueue([]);
+      setLibraryKey((k) => k + 1);
     } catch (err) {
-      showToast(`Failed: ${err.message}`, 'error');
-      try {
-        await api.cancelDownloads();
-      } catch (_) {}
+      showToast(`Failed to clear downloads: ${err.message}`, 'error');
     }
-    setQueue([]);
     setClearing(false);
   };
 
@@ -119,28 +184,46 @@ export default function App() {
     }
   };
 
-  // "Open File" opens a server-side browser of the downloads directory.
-  const handleOpenFile = () => {
-    setShowFileBrowser(true);
+  const handleRetryJob = async (jobId) => {
+    try {
+      await api.retryJob(jobId);
+    } catch (err) {
+      showToast(`Failed to retry job: ${err.message}`, 'error');
+    }
   };
+
+  const handleRemoveJob = async (jobId) => {
+    try {
+      await api.removeJob(jobId);
+      setQueue((prev) => prev.filter((j) => j.id !== jobId));
+    } catch (err) {
+      showToast(`Failed to remove job: ${err.message}`, 'error');
+    }
+  };
+
+  const thumbUrlFor = useCallback((job) => {
+    if (job && job.thumbnailUrl) {
+      try {
+        return api.thumbUrl(job.thumbnailUrl);
+      } catch (_) {
+        return '';
+      }
+    }
+    return '';
+  }, []);
 
   const handleSaveApiKey = () => {
     const key = (apiKeyInput || '').trim();
     api.setApiKey(key);
     showToast(key ? 'API key saved' : 'API key cleared', 'success');
+    setShowSettings(false);
   };
 
-  const handleBrowseSelect = (filePath) => {
-    setShowFileBrowser(false);
-    if (filePath) {
-      setSelectedFile(filePath);
-      setShowMetadata(true);
-    }
-  };
-
-  // "Show in Folder" downloads/opens the file in the browser.
   const handleShowInFolder = (filePath) => {
-    api.openFile(filePath);
+    const win = api.openFile(filePath);
+    if (!win) {
+      showToast('Popup blocked — allow popups to download the file', 'warning');
+    }
   };
 
   const handleEditDownloadedFile = (filePath) => {
@@ -154,80 +237,155 @@ export default function App() {
   };
 
   const hasQueue = queue.length > 0;
+  const completedCount = queue.filter((j) => j.status === 'Complete' && j.outputPath).length;
 
   return (
     <div className="app-container">
-      {/* Center section: title + search bar */}
-      <div className={`center-section${hasQueue ? ' has-queue' : ''}`}>
-        {!hasQueue && <div className="center-title">Stow</div>}
+      <header className="topbar">
+        <div className="brand">
+          <span className="brand-mark" aria-hidden="true">
+            <NoteIcon size={15} />
+          </span>
+          <span className="brand-name">Stow</span>
+        </div>
+        <div className="topbar-actions">
+          <button
+            ref={settingsButtonRef}
+            className="btn-icon"
+            onClick={() => setShowSettings(true)}
+            aria-label="Settings"
+            aria-expanded={showSettings}
+            title="Settings"
+          >
+            <SettingsIcon size={16} />
+            <span className="btn-icon-text">Settings</span>
+          </button>
+          <button
+            className="btn-icon"
+            onClick={toggleTheme}
+            aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}
+            title="Toggle theme"
+          >
+            {theme === 'dark' ? <SunIcon size={16} /> : <MoonIcon size={16} />}
+          </button>
+        </div>
+      </header>
+
+      <main className="main">
+        {!hasQueue && (
+          <section className="hero">
+            <h1 className="hero-title">Download audio from YouTube</h1>
+            <p className="hero-sub">Paste a link. Get a tagged Opus file.</p>
+          </section>
+        )}
         <UrlInput onStartDownloads={handleStartDownloads} />
-      </div>
 
-      {/* Queue section: below the search bar */}
-      <div className="queue-section">
-        <QueuePanel
-          queue={queue}
-          onCancelAll={handleCancelAll}
-          onCancelJob={handleCancelJob}
-          onEditFile={handleEditDownloadedFile}
-          onShowInFolder={handleShowInFolder}
-        />
-      </div>
+        {hasQueue && (
+          <QueuePanel
+            queue={queue}
+            onCancelAll={handleCancelAll}
+            onCancelJob={handleCancelJob}
+            onRetryJob={handleRetryJob}
+            onRemoveJob={handleRemoveJob}
+            onEditFile={handleEditDownloadedFile}
+            onShowInFolder={handleShowInFolder}
+            onPlayFile={setNowPlaying}
+            thumbUrlFor={thumbUrlFor}
+          />
+        )}
 
-      {/* Server-side file browser (replaces the native Open File dialog) */}
-      {showFileBrowser && (
-        <div className="modal-overlay" onClick={(e) => {
-          if (e.target === e.currentTarget) setShowFileBrowser(false);
-        }}>
-          <div className="modal-dialog" style={{ maxWidth: '640px' }}>
-            <FileBrowser
-              onSelect={handleBrowseSelect}
-              onClose={() => setShowFileBrowser(false)}
-            />
+        <InspectPanel showToast={showToast} onDownload={handleStartDownloads} />
+
+        <Library onEdit={handleEditDownloadedFile} onDownload={handleShowInFolder} onPlay={setNowPlaying} reloadKey={libraryKey} />
+      </main>
+
+      <PlayerBar filePath={nowPlaying} onClose={() => setNowPlaying(null)} />
+
+      {showSettings && (
+        <div
+          className="modal-overlay"
+          onClick={(e) => { if (e.target === e.currentTarget) setShowSettings(false); }}
+        >
+          <div className="modal-dialog settings-dialog" role="dialog" aria-modal="true" aria-label="Settings">
+            <div className="modal-header">
+              <h2>Settings</h2>
+              <button className="modal-close-btn" onClick={() => setShowSettings(false)} aria-label="Close settings">
+                <XIcon size={16} />
+              </button>
+            </div>
+            <div className="modal-body">
+              <div className="settings-body">
+                <section className="settings-section" aria-label="Access">
+                  <h3 className="settings-section-title">Access</h3>
+                  <label className="form-label" htmlFor="api-key-input">API key</label>
+                  <div className="api-key-row">
+                    <input
+                      id="api-key-input"
+                      ref={settingsInputRef}
+                      className="form-input api-key-input"
+                      type="password"
+                      placeholder="Optional"
+                      value={apiKeyInput}
+                      onChange={(e) => setApiKeyInput(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') handleSaveApiKey(); }}
+                      autoComplete="off"
+                    />
+                    <button className="btn btn-secondary btn-small" onClick={handleSaveApiKey}>
+                      Save
+                    </button>
+                  </div>
+                  <p className="form-hint">Only needed if STOW_API_KEY is set server-side.</p>
+                </section>
+                <SettingsPanel showToast={showToast} onClose={() => setShowSettings(false)} />
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-primary" onClick={() => setShowSettings(false)}>
+                Done
+              </button>
+            </div>
           </div>
         </div>
       )}
 
-      {/* Clear Confirmation Dialog */}
       {showClearConfirm && (
         <div className="modal-overlay" onClick={(e) => {
           if (e.target === e.currentTarget) setShowClearConfirm(false);
         }}>
-          <div className="modal-dialog" style={{ maxWidth: '400px' }}>
-            <div style={{ padding: '24px 20px 20px' }}>
-              <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '8px' }}>
-                Clear all downloads?
+          <div className="modal-dialog modal-dialog-narrow" role="dialog" aria-modal="true" aria-label="Clear downloads">
+            <div className="confirm-dialog">
+              <h3 className="confirm-title">
+                Clear downloads?
               </h3>
-              <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '20px', lineHeight: '1.5' }}>
-                {queue.filter(j => j.status === 'Complete' && j.outputPath).length > 0
-                  ? `There ${queue.filter(j => j.status === 'Complete' && j.outputPath).length === 1 ? 'is' : 'are'} ${queue.filter(j => j.status === 'Complete' && j.outputPath).length} completed download(s) with audio files on disk.`
+              <p className="confirm-text">
+                {completedCount > 0
+                  ? `There ${completedCount === 1 ? 'is' : 'are'} ${completedCount} completed download(s) with audio files on disk.`
                   : 'No completed downloads with files to clean up.'}
               </p>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <div style={{ display: 'flex', gap: '8px' }}>
+              <div className="confirm-actions">
+                <div className="confirm-row">
                   <button
-                    className="btn btn-secondary"
-                    style={{ flex: 1, textAlign: 'center' }}
+                    className="btn btn-ghost btn-block"
                     onClick={() => setShowClearConfirm(false)}
+                    disabled={clearing}
                   >
                     Cancel
                   </button>
                   <button
-                    className="btn btn-secondary"
-                    style={{ flex: 1, textAlign: 'center' }}
+                    className="btn btn-secondary btn-block"
                     onClick={() => handleClearConfirm(false)}
+                    disabled={clearing}
                   >
-                    Clear List Only
+                    {clearing ? 'Clearing…' : 'Clear list'}
                   </button>
                 </div>
-                {queue.filter(j => j.status === 'Complete' && j.outputPath).length > 0 && (
+                {completedCount > 0 && (
                   <button
-                    className="btn btn-danger"
-                    style={{ width: '100%', padding: '12px 20px', fontSize: '15px', fontWeight: 700 }}
+                    className="btn btn-danger btn-block confirm-danger"
                     onClick={() => handleClearConfirm(true)}
                     disabled={clearing}
                   >
-                    Clear & Delete Files
+                    {clearing ? 'Clearing…' : 'Clear and delete files'}
                   </button>
                 )}
               </div>
@@ -236,42 +394,14 @@ export default function App() {
         </div>
       )}
 
-      {/* Bottom bar: Open File & Theme toggle */}
-      <div className="bottom-bar">
-        <div className="bottom-bar-left">
-          <button className="btn-icon" onClick={handleOpenFile}>
-            <span className="icon">📂</span>
-            Open File
-          </button>
-          <div className="api-key-row">
-            <input
-              className="form-input api-key-input"
-              type="password"
-              placeholder="API key (optional)"
-              value={apiKeyInput}
-              onChange={(e) => setApiKeyInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') handleSaveApiKey(); }}
-              aria-label="API key"
-            />
-            <button className="btn btn-secondary btn-small" onClick={handleSaveApiKey}>
-              Save
-            </button>
-          </div>
-        </div>
-        <div className="bottom-bar-right">
-          <button className="btn-icon" onClick={toggleTheme}>
-            <span className="icon">{theme === 'dark' ? '☀️' : '🌙'}</span>
-            {theme === 'dark' ? 'Light' : 'Dark'}
-          </button>
-        </div>
-      </div>
-
-      {/* Metadata Modal */}
       {showMetadata && (
         <div className="modal-overlay" onClick={(e) => {
-          if (e.target === e.currentTarget) handleCloseMetadata();
+          if (e.target === e.currentTarget) {
+            if (typeof window !== 'undefined' && window.__stowRequestMetadataClose) window.__stowRequestMetadataClose();
+            else handleCloseMetadata();
+          }
         }}>
-          <div className="modal-dialog">
+          <div className="modal-dialog modal-dialog-wide" role="dialog" aria-modal="true" aria-label="Metadata editor">
             <MetadataEditor
               filePath={selectedFile}
               onClose={handleCloseMetadata}
@@ -281,12 +411,21 @@ export default function App() {
         </div>
       )}
 
-      {/* Toast */}
-      {toast && (
-        <div className={`toast ${toast.type}`}>
-          {toast.message}
-        </div>
-      )}
+      <div className="toast-stack" aria-live="polite">
+        {toasts.map((t) => (
+          <div key={t.id} className={`toast ${t.type}`} role="status">
+            <span className={`toast-dot`} aria-hidden="true" />
+            <span className="toast-msg">{t.message}</span>
+            <button
+              className="toast-close"
+              onClick={() => dismissToast(t.id)}
+              aria-label="Dismiss notification"
+            >
+              <XIcon size={14} />
+            </button>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

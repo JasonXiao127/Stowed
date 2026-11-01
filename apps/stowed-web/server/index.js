@@ -12,6 +12,7 @@ const {
   isOriginAllowed,
   isHostAllowed,
   hasValidKey,
+  authFailureLimiter,
   rateLimitMiddleware,
   apiRateLimit,
 } = require('./security');
@@ -160,8 +161,21 @@ server.on('upgrade', (req, socket, head) => {
   const fakeReq = { headers: req.headers, query: Object.fromEntries(parsed.searchParams) };
   // Origin + Host checks close the DNS-rebinding / drive-by CSRF hole; the API
   // key (when set) gates the actual data.
-  if (!isHostAllowed(fakeReq) || !isOriginAllowed(fakeReq) || !hasValidKey(fakeReq)) {
+  if (!isHostAllowed(fakeReq) || !isOriginAllowed(fakeReq)) {
     socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
+    socket.destroy();
+    return;
+  }
+  if (!hasValidKey(fakeReq)) {
+    // Same brute-force protection as the HTTP API: repeated bad keys from an
+    // IP are throttled instead of getting unlimited handshake attempts.
+    const ip = socket.remoteAddress || 'unknown';
+    const attempt = authFailureLimiter({ ip, headers: req.headers, query: fakeReq.query });
+    if (attempt.blocked) {
+      socket.write(`HTTP/1.1 429 Too Many Requests\r\nRetry-After: ${attempt.retryAfter}\r\n\r\n`);
+    } else {
+      socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
+    }
     socket.destroy();
     return;
   }

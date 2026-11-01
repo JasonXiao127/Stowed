@@ -61,6 +61,14 @@ const api = {
       body: '{}',
     }),
   getQueue: () => jsonRequest('/api/queue'),
+  retryJob: (jobId) =>
+    jsonRequest('/api/queue/retry', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: jobId }),
+    }),
+  removeJob: (jobId) =>
+    jsonRequest(`/api/queue/${encodeURIComponent(jobId)}`, { method: 'DELETE' }),
   deleteFiles: (filePaths) =>
     jsonRequest('/api/delete-files', {
       method: 'POST',
@@ -71,10 +79,17 @@ const api = {
   // ---- Files -------------------------------------------------------------
   listFiles: (dir) =>
     jsonRequest(`/api/files?dir=${encodeURIComponent(dir || '')}`),
+  fileUrlWithKey: (filePath, download = false) => {
+    const key = api.getApiKey ? api.getApiKey() : '';
+    const base = `/api/file?path=${encodeURIComponent(filePath)}&download=${download ? 1 : 0}`;
+    return key ? `${base}&apikey=${encodeURIComponent(key)}` : base;
+  },
+  // Legacy aliases — kept so any caller using the bare versions still gets an
+  // authed URL (<audio>/<img>/wavesurfer can't send headers).
   fileUrl: (filePath, download = false) =>
-    `/api/file?path=${encodeURIComponent(filePath)}&download=${download ? 1 : 0}`,
+    api.fileUrlWithKey(filePath, download),
   openFile: (filePath) => {
-    window.open(api.fileUrl(filePath, true), '_blank');
+    return window.open(api.fileUrlWithKey(filePath, true), '_blank');
   },
 
   // ---- Metadata ----------------------------------------------------------
@@ -94,7 +109,89 @@ const api = {
       body: JSON.stringify({ path: filePath, tags }),
     });
   },
-  coverUrl: (filePath) => `/api/cover?path=${encodeURIComponent(filePath)}`,
+  coverUrlWithKey: (filePath) => {
+    const key = api.getApiKey ? api.getApiKey() : '';
+    const base = `/api/cover?path=${encodeURIComponent(filePath)}`;
+    return key ? `${base}&apikey=${encodeURIComponent(key)}` : base;
+  },
+  coverUrl: (filePath) => api.coverUrlWithKey(filePath),
+
+  // ---- MusicBrainz -------------------------------------------------------
+  mbSearch: ({ title, artist, album, limit } = {}) => {
+    const q = new URLSearchParams();
+    if (title) q.set('title', title);
+    if (artist) q.set('artist', artist);
+    if (album) q.set('album', album);
+    if (limit) q.set('limit', String(limit));
+    return jsonRequest(`/api/mb/search?${q.toString()}`);
+  },
+  mbCoverUrl: (releaseId) => {
+    const key = api.getApiKey ? api.getApiKey() : '';
+    const base = `/api/mb/cover?releaseId=${encodeURIComponent(releaseId)}`;
+    return key ? `${base}&apikey=${encodeURIComponent(key)}` : base;
+  },
+
+  // ---- Audio trim --------------------------------------------------------
+  getDuration: (filePath) =>
+    jsonRequest(`/api/duration?path=${encodeURIComponent(filePath)}`),
+  trimAudio: (filePath, start, end) =>
+    jsonRequest('/api/trim', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: filePath, start, end }),
+    }),
+
+  // ---- System / settings -------------------------------------------------
+  getSystem: () => jsonRequest('/api/system'),
+  getSettings: () => jsonRequest('/api/settings'),
+  saveSettings: (patch) =>
+    jsonRequest('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    }),
+
+  // ---- Inspect / library / thumb -----------------------------------------
+  inspectUrl: (url, playlistEnd = 20) =>
+    jsonRequest('/api/inspect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, playlistEnd }),
+    }),
+  getLibrary: ({ q, sort, order, limit, offset } = {}) => {
+    const params = new URLSearchParams();
+    if (q) params.set('q', q);
+    if (sort) params.set('sort', sort);
+    if (order) params.set('order', order);
+    if (limit) params.set('limit', String(limit));
+    if (offset) params.set('offset', String(offset));
+    return jsonRequest(`/api/library?${params.toString()}`);
+  },
+  thumbUrl: (remoteUrl) => {
+    const key = api.getApiKey ? api.getApiKey() : '';
+    const base = `/api/thumb?url=${encodeURIComponent(remoteUrl)}`;
+    return key ? `${base}&apikey=${encodeURIComponent(key)}` : base;
+  },
+
+  // ---- Cookies ------------------------------------------------------------
+  getCookiesStatus: () => jsonRequest('/api/cookies/status'),
+  saveCookies: (text) =>
+    jsonRequest('/api/cookies', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cookies: text }),
+    }),
+  saveCookiesFile: (file) => {
+    const fd = new FormData();
+    fd.append('cookies', file);
+    return jsonRequest('/api/cookies', { method: 'POST', body: fd });
+  },
+  removeCookies: () =>
+    jsonRequest('/api/cookies', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    }),
 };
 
 // ---- WebSocket real-time events -----------------------------------------
@@ -107,8 +204,40 @@ const listeners = {
 
 let ws = null;
 let reconnectTimer = null;
+let backoffAttempts = 0;
+let authRejected = false;
+const authRejectedListeners = new Set();
+
+function notifyAuthRejected() {
+  if (authRejected) return;
+  authRejected = true;
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  authRejectedListeners.forEach((cb) => { try { cb(); } catch (_) {} });
+}
+
+function scheduleReconnect() {
+  if (authRejected) return;
+  if (reconnectTimer) clearTimeout(reconnectTimer);
+  const delay = Math.min(30000, 1000 * Math.pow(2, backoffAttempts));
+  backoffAttempts += 1;
+  reconnectTimer = setTimeout(connectSocket, delay);
+}
+
+async function probeAuthAndMaybeStop() {
+  // Upgrade rejections surface as code 1006 in browsers; probe HTTP to tell
+  // a bad API key (stop + toast) from a transient drop (backoff + retry).
+  try {
+    const res = await fetch('/api/queue', { headers: authHeaders({}) });
+    if (res.status === 401 || res.status === 403) {
+      notifyAuthRejected();
+      return true;
+    }
+  } catch (_) {}
+  return false;
+}
 
 function connectSocket() {
+  if (authRejected) return;
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   // Browsers cannot attach custom headers to a WebSocket handshake, so the key
   // travels in the query string (the one place server security.js also accepts it).
@@ -116,9 +245,14 @@ function connectSocket() {
   try {
     ws = new WebSocket(`${proto}//${window.location.host}/ws${keyQuery}`);
   } catch (_) {
-    reconnectTimer = setTimeout(connectSocket, 3000);
+    scheduleReconnect();
     return;
   }
+
+  ws.onopen = () => {
+    backoffAttempts = 0;
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  };
 
   ws.onmessage = (e) => {
     let msg;
@@ -130,9 +264,18 @@ function connectSocket() {
     (listeners[msg.type] || []).forEach((cb) => cb(msg.data));
   };
 
-  ws.onclose = () => {
+  ws.onclose = (ev) => {
     ws = null;
-    reconnectTimer = setTimeout(connectSocket, 3000);
+    const code = ev && ev.code;
+    if (code === 401 || code === 403 || code === 4401 || code === 4403) {
+      notifyAuthRejected();
+      return;
+    }
+    // Likely an upgrade rejection (bad key) which browsers report as 1006:
+    // probe once, stop only when HTTP confirms 401/403.
+    probeAuthAndMaybeStop().then((stopped) => {
+      if (!stopped) scheduleReconnect();
+    });
   };
   ws.onerror = () => {
     try { ws.close(); } catch (_) {}
@@ -159,8 +302,16 @@ api.setApiKey = (key) => {
   apiKey = String(key || '').trim();
   try { localStorage.setItem('stow-api-key', apiKey); } catch (_) {}
   // Reconnect the socket so the new/cleared key takes effect immediately.
+  authRejected = false;
+  backoffAttempts = 0;
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
   if (ws) { try { ws.close(); } catch (_) {} }
+  else connectSocket();
 };
 api.getApiKey = () => apiKey;
+api.onAuthRejected = (cb) => {
+  authRejectedListeners.add(cb);
+  return () => authRejectedListeners.delete(cb);
+};
 
 export default api;

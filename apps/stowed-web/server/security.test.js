@@ -176,6 +176,43 @@ test('validateDownloadUrl blocks non-http schemes and private/loopback literal t
   assert.match(validateDownloadUrl('http://localhost/') || '', /private/);
 });
 
+test('validateDownloadUrl blocks scheme variants without "//" (still real URLs)', () => {
+  const { validateDownloadUrl } = require('./security');
+  // WHATWG URL parsing (and yt-dlp) treat these as fetch targets, so the
+  // "no :// means bare ID" shortcut must not let them through.
+  assert.match(validateDownloadUrl('http:169.254.169.254') || '', /private/);
+  assert.match(validateDownloadUrl('http:/169.254.169.254') || '', /private/);
+  assert.match(validateDownloadUrl('http:127.0.0.1/admin') || '', /private/);
+  // Bare schemes without slashes (file:, ftp:, javascript:, data:) are real
+  // fetch targets too — they must be rejected, not treated as search queries.
+  assert.match(validateDownloadUrl('file:/etc/passwd') || '', /unsupported protocol/);
+  assert.match(validateDownloadUrl('file:etc/passwd') || '', /unsupported protocol/);
+  assert.match(validateDownloadUrl('ftp:192.168.1.1/x') || '', /unsupported protocol|private/);
+  assert.match(validateDownloadUrl('javascript:alert(1)') || '', /unsupported protocol/);
+  assert.match(validateDownloadUrl('data:text/plain,hi') || '', /unsupported protocol/);
+  // ...but genuine bare IDs / search queries still pass through.
+  assert.equal(validateDownloadUrl('dQw4w9WgXcQ'), null);
+  assert.equal(validateDownloadUrl('ytsearch:never gonna give you up'), null);
+  assert.equal(validateDownloadUrl('ytsearch10:never gonna give you up'), null);
+});
+
+test('validateDownloadUrl blocks IPv6 transition forms of private IPv4 targets', () => {
+  const { validateDownloadUrl } = require('./security');
+  // Node normalizes "[::ffff:127.0.0.1]" to hex ("::ffff:7f00:1"), so the
+  // check must work on normalized bytes, not on the dotted input form.
+  assert.match(validateDownloadUrl('http://[::ffff:7f00:1]/') || '', /private/); // mapped loopback
+  assert.match(validateDownloadUrl('http://[::ffff:127.0.0.1]/') || '', /private/);
+  assert.match(validateDownloadUrl('http://[::ffff:a9fe:a9fe]/') || '', /private/); // mapped metadata IP
+  assert.match(validateDownloadUrl('http://[::ffff:0:7f00:1]/') || '', /private/); // SIIT translated
+  assert.match(validateDownloadUrl('http://[::7f00:1]/') || '', /private/); // v4-compatible
+  assert.match(validateDownloadUrl('http://[64:ff9b::7f00:1]/') || '', /private/); // NAT64
+  assert.match(validateDownloadUrl('http://[2002:7f00:1::]/') || '', /private/); // 6to4
+  // ...while the same mechanisms carrying public addresses stay allowed.
+  assert.equal(validateDownloadUrl('http://[::ffff:5db8:d822]/'), null);
+  assert.equal(validateDownloadUrl('http://[2002:5db8:d822::]/'), null);
+  assert.equal(validateDownloadUrl('http://[2606:2800:220:1:248:1893:25c8:1946]/'), null);
+});
+
 test('validateDownloadUrl honors the STOW_ALLOW_PRIVATE_IP_URLS opt-out', () => {
   const { validateDownloadUrl } = require('./security');
   const config = require('./config');
@@ -210,6 +247,33 @@ test('authFailureLimiter blocks after max failed attempts', () => {
   assert.equal(limiter(req()).blocked, false);
   assert.equal(limiter(req()).blocked, false);
   assert.equal(limiter(req()).blocked, true);
+});
+
+test('rate limiters use one-window expiry (now >= resetAt)', () => {
+  const { createRateLimiter, createFailureLimiter } = require('./security');
+  const origNow = Date.now;
+  try {
+    let t = 1_000_000;
+    Date.now = () => t;
+    const limiter = createRateLimiter({ windowMs: 1000, max: 1 });
+    const req = () => ({ ip: '9.9.9.9' });
+    assert.equal(limiter(req()).allowed, true);
+    assert.equal(limiter(req()).allowed, false);
+    // Advance just past one window: should allow again (not require two windows).
+    t += 1001;
+    assert.equal(limiter(req()).allowed, true);
+    assert.equal(limiter(req()).allowed, false);
+
+    t = 2_000_000;
+    const failer = createFailureLimiter({ windowMs: 1000, max: 1 });
+    const freq = () => ({ ip: '9.9.9.8' });
+    assert.equal(failer(freq()).blocked, false);
+    assert.equal(failer(freq()).blocked, true);
+    t += 1001;
+    assert.equal(failer(freq()).blocked, false);
+  } finally {
+    Date.now = origNow;
+  }
 });
 // ---- CSP: strict in production, relaxed only for the Vite dev server ---------
 

@@ -137,16 +137,23 @@ docker push maraudermarauder/stowed:1.0.2
 
 > The **files never leave whatever directory compose gives the container.** To
 > move downloads elsewhere, change the mount, e.g. `./music:/downloads`. The app
-> only ever writes inside `STOW_DOWNLOAD_DIR`/`STOW_CONFIG_DIR`.
+> only ever writes inside `STOW_DOWNLOAD_DIR`/`STOW_CONFIG_DIR` (per-job
+> intermediates stage under `STOW_DOWNLOAD_DIR/.stow-tmp/`, hidden from the
+> library and cleaned per job; yt-dlp cache uses the `/tmp` tmpfs).
 
 ### Behavior differences vs. the desktop app
 
-- **"Open File"** browses audio files already in the download directory (server-side).
+- The home page has a **Library** panel browsing audio files already in the
+  download directory (server-side), with per-file Edit and Download actions.
 - **"Show in Folder"** downloads/opens the file in the browser instead of a file manager.
+- The **API key** lives under Settings (gear icon, top-right), not a bottom bar.
 - Editing **tags** works on any supported format. Replacing **cover art** works on
-  formats that support an attached-picture stream (MP3/MP4/FLAC/M4A); Ogg Opus
-  files carry their cover as embedded metadata at download time and cannot have it
-  swapped via FFmpeg (same limitation as the desktop app).
+  MP3/MP4/FLAC/M4A via an attached-picture stream, and Ogg Opus/Ogg Vorbis via
+  an embedded `METADATA_BLOCK_PICTURE` comment (written natively, since FFmpeg
+  cannot mux an attached picture into Ogg). WAV, raw AAC and WebM cannot store
+  cover art, so the cover picker is disabled for those.
+- **MusicBrainz lookup and waveform trim are web-only.** The desktop client has
+  neither the match picker/cover fetch nor the trim editor.
 - All real-time progress is pushed over a WebSocket; the client reconnects and
   re-syncs the queue automatically.
 
@@ -172,10 +179,44 @@ Run from the repo root (this app lives at `apps/stowed-web` in the Stowed monore
 ```bash
 npm install
 npm run build:web     # build the renderer into apps/stowed-web/dist/
-npm test              # run the queue state-machine unit tests (node --test)
+npm test              # run the unit tests (node --test: queue, security, MusicBrainz, trim)
 npm run start:web     # serve UI + API at http://localhost:5183
 # or hot-reload UI:  npm run dev:web  (Vite on :5173, proxied by the Node server)
 ```
+
+### Metadata API (MusicBrainz lookup + trim)
+
+The metadata editor is backed by four extra endpoints (all use the existing
+`/api` auth: `X-API-Key` header or `?apikey=` query):
+
+- `GET /api/mb/search?title=&artist=&album=&limit=` — MusicBrainz recording
+  search, proxied server-side (correct `User-Agent`, 1 req/sec throttle,
+  10-min cache). Returns `{ results: [{ recordingId, title, artist, album,
+  date, year, releaseId, score }] }`.
+- `GET /api/mb/cover?releaseId=` — front cover from the Cover Art Archive,
+  proxied (MBID-validated, image-type + 10 MB caps, 404s cached 10 min).
+- `GET /api/duration?path=` — ffprobe duration in seconds (`{ path, duration }`).
+- `POST /api/trim` `{ path, start, end }` — keeps `[start, end)` (min 1 s) via
+  ffmpeg `libopus` re-encode with metadata preserved, atomically replacing the
+  original. Opus/Ogg only; max 2 concurrent trims (429 when busy).
+
+### System, settings, inspect, library API
+
+- `GET /api/system` — yt-dlp version, JS runtime (Deno/Node), EJS status,
+  plus sanitized settings for the Settings panel.
+- `GET /api/settings` / `POST /api/settings` — `embedChapters` (bool),
+  `sponsorblock` (`null` or `remove:<cats>`/`mark:<cats>`), `opusPreferred`,
+  `autoUpdateYtDlp`. Unknown keys are ignored.
+- `GET /api/cookies/status`, `POST /api/cookies`, `DELETE /api/cookies` —
+  Netscape cookies.txt for age-restricted videos (stored `0600`, never echoed).
+- `POST /api/inspect` `{ url, playlistEnd? }` — video/playlist preview via
+  `yt-dlp -J --flat-playlist` (30 s timeout, 1 MB cap, SSRF-checked).
+- `GET /api/thumb?url=` — same-origin thumbnail proxy (CDN allowlist,
+  image-type + 10 MB caps) so the strict `img-src 'self'` CSP holds.
+- `GET /api/library?q=&sort=&order=&limit=&offset=` — batched tags for the
+  cover grid (cached music-metadata reads, max 200/track page).
+- `POST /api/queue/retry` `{ id }` / `DELETE /api/queue/:id` — retry a failed
+  job or remove it from the queue.
 
 ## Why Stow?
 
@@ -193,7 +234,13 @@ Served as a self-hosted web app on your LAN — no ads, no “download our app�
 - Outputs `.opus` containers — uses the same Opus codec YouTube serves internally
 - Auto-embeds thumbnails and metadata (title, artist, album, etc.)
 - Built-in metadata editor to fix or change tags and cover art after download
-- Queue management: add multiple URLs, cancel one or all
+- MusicBrainz match picker: search recordings, fill title/artist/album/year, fetch cover art
+- Waveform trim editor: keep a time range (drag region or type times), preview, overwrite in place (Opus/Ogg)
+- Link preview: inspect single videos and playlists before downloading, pick tracks
+- Library: cover grid + list views, search/sort, inline play, edit, download
+- Rich queue cards: stage (fetching → downloading → converting → tagging → cover), bytes, speed, ETA, warnings, retry/remove
+- Bottom player with cover art; Settings for yt-dlp version, SponsorBlock, chapters, cookies
+- Queue management: add multiple URLs, cancel one or all, retry failed, remove
 - Persistent queue that resumes across app restarts; detects already downloaded files
 - Duplicate URL detection prevents downloading the same video twice
 - Dark and light theme
@@ -205,12 +252,18 @@ Served as a self-hosted web app on your LAN — no ads, no “download our app�
 2. Stow downloads the raw Opus stream using yt-dlp and repackages it with ffmpeg — no re-encoding.
 3. Thumbnails and metadata (title, channel, upload date, etc.) are embedded automatically.
 4. Optionally open the built-in editor to fix any tag or swap the cover art.
+   Use MusicBrainz search to fill tags from the correct release, and trim
+   silence/intros with the waveform editor (Opus files are re-encoded at
+   160k Opus with tags preserved).
 5. Enjoy your Opus files.
 
 ## Tech Stack
 
 - **React** (Vite) — the web UI, served by the Node server (Docker-ready)
+- **wavesurfer.js** — waveform display + keep-range region for trimming
+- **MusicBrainz / Cover Art Archive** (proxied) — recording search + cover fetch
 - **yt-dlp** — downloads the audio stream from YouTube
 - **ffmpeg** — remuxes the Opus stream into an `.opus` container
+- **ffprobe** — duration reads for the trim editor
 - **music-metadata** (Node.js) — reads/writes metadata and cover art
 - **Node.js** (Express + WebSocket) — web server, download management and queue state

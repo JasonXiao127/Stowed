@@ -18,9 +18,15 @@
     "test:web": "npm run test --workspace stowed-web",
     "setup-binaries:web": "npm run setup-binaries --workspace stowed-web",
     "setup-binaries:client": "npm run setup-binaries --workspace stow-client",
-    "test": "npm run test:web"
+    "test": "npm run test:web && node packages/core/src/ytdlp.test.js"
   },
   "keywords": [],
   "author": "Stow",
-  "license": "ISC"
+  "license": "ISC",
+  "allowScripts": {
+    "esbuild@0.25.12": true
+  },
+  "optionalDependencies": {
+    "@rollup/rollup-linux-x64-gnu": "^4.67.4"
+  }
 }

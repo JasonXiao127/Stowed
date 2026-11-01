@@ -4,17 +4,17 @@ export default function UrlInput({ onStartDownloads }) {
   const [urls, setUrls] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
+  const lines = urls
+    .split('\n')
+    .map((u) => u.trim())
+    .filter((u) => u.length > 0);
+  const count = lines.length;
+
   const handleSubmit = async () => {
-    const urlList = urls
-      .split('\n')
-      .map((u) => u.trim())
-      .filter((u) => u.length > 0);
-
-    if (urlList.length === 0) return;
-
+    if (lines.length === 0 || isLoading) return;
     setIsLoading(true);
     try {
-      await onStartDownloads(urlList);
+      await onStartDownloads(lines);
       setUrls('');
     } catch (err) {
       console.error('Failed to start downloads:', err);
@@ -32,24 +32,26 @@ export default function UrlInput({ onStartDownloads }) {
 
   return (
     <div className="url-section">
-      <div className="url-input-container">
+      <div className="url-input-container composer">
         <textarea
           className="url-textarea"
-          placeholder="Paste YouTube URLs here (one per line)..."
+          aria-label="Links, one per line"
+          placeholder="Paste links, one per line"
           value={urls}
           onChange={(e) => setUrls(e.target.value)}
           onKeyDown={handleKeyDown}
-          rows={2}
+          rows={3}
           disabled={isLoading}
         />
         <button
-          className="btn btn-primary"
+          className="btn btn-primary composer-btn"
           onClick={handleSubmit}
-          disabled={isLoading || urls.trim().length === 0}
+          disabled={isLoading || count === 0}
         >
-          {isLoading ? 'Adding...' : 'Download All'}
+          {isLoading ? 'Adding…' : count > 0 ? `Download ${count}` : 'Download'}
         </button>
       </div>
+      <p className="composer-hint">Ctrl/⌘ + Enter to start · saved as tagged Opus</p>
     </div>
   );
 }

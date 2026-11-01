@@ -4,7 +4,8 @@
   "description": "Shared React UI for Stow apps (queue panel, URL input, theme)",
   "main": "src/index.js",
   "exports": {
-    ".": "./src/index.js"
+    ".": "./src/index.js",
+    "./tokens.css": "./src/tokens.css"
   },
   "license": "ISC",
   "type": "module",

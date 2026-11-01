@@ -56,4 +56,19 @@ function getFfprobePath() {
   return resolveTool('ffprobe');
 }
 
-module.exports = { getYtDlpPath, getFfmpegPath, getFfprobePath };
+function getDenoPath() {
+  // Deno ships in the same bin/<platform>/ folder when setup-binaries ran;
+  // in Docker, Node is already on PATH so yt-dlp can use --js-runtimes node.
+  try {
+    const local = path.join(__dirname, '..', 'bin', platform(), process.platform === 'win32' ? 'deno.exe' : 'deno');
+    if (fs.existsSync(local)) return local;
+  } catch (_) {}
+  return findOnPath(process.platform === 'win32' ? 'deno.exe' : 'deno');
+}
+
+function getJsRuntime() {
+  if (getDenoPath()) return 'deno';
+  return 'node';
+}
+
+module.exports = { getYtDlpPath, getFfmpegPath, getFfprobePath, getDenoPath, getJsRuntime };

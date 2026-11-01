@@ -1,9 +1,17 @@
 const cp = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const { randomUUID } = require('crypto');
 const config = require('./config');
-const { getYtDlpPath, getFfmpegPath } = require('./binaries');
+const { getYtDlpPath, getFfmpegPath, getJsRuntime, getDenoPath } = require('./binaries');
+const {
+  buildYtDlpArgs,
+  splitOutputLines,
+  parseLine,
+  stageForPostprocessor,
+  parseVersion,
+} = require('@stowed/core');
 
 const QUEUE_FILE = path.join(config.configDir, 'queue-state.json');
 
@@ -81,15 +89,37 @@ class DownloadManager {
             return {
               ...job,
               status: 'Pending',
+              stage: 'queued',
               progress: 0,
+              downloadedBytes: null,
+              totalBytes: null,
               speed: '',
               eta: '',
+              elapsed: null,
               error: '',
+              warnings: [],
+              tempDir: '',
+              startedAt: null,
               cancelled: false,
               process: null,
             };
           }
-          return job;
+          // Migrate older queue files that lack the rich fields.
+          return {
+            warnings: [],
+            stage: job.status === 'Complete' ? 'done' : job.stage || 'queued',
+            downloadedBytes: null,
+            totalBytes: null,
+            elapsed: null,
+            uploader: '',
+            duration: null,
+            thumbnailUrl: '',
+            webpageUrl: '',
+            uploadDate: '',
+            tempDir: '',
+            startedAt: job.startedAt || null,
+            ...job,
+          };
         });
         persistQueueState(this.queue);
         this._emit('queue-updated', this._getSafeQueue());
@@ -151,12 +181,24 @@ class DownloadManager {
       id: `job_${Date.now()}_${randomUUID()}`,
       url: url,
       status: 'Pending',
+      stage: 'queued',
       progress: 0,
+      downloadedBytes: null,
+      totalBytes: null,
       speed: '',
       eta: '',
+      elapsed: null,
       outputPath: '',
       error: '',
+      warnings: [],
       title: '',
+      uploader: '',
+      duration: null,
+      thumbnailUrl: '',
+      webpageUrl: '',
+      uploadDate: '',
+      tempDir: '',
+      startedAt: null,
       cancelled: false,
     }));
 
@@ -179,7 +221,7 @@ class DownloadManager {
       prev.cancelled = true;
       prev.process = null;
       this.currentJob = null;
-      this._cleanupPartialFiles(prev);
+      this._cleanupJobTemp(prev);
     }
 
     this.queue = [];
@@ -191,19 +233,24 @@ class DownloadManager {
 
   cancelJob(jobId) {
     const jobIndex = this.queue.findIndex((j) => j.id === jobId);
-    if (jobIndex === -1) return;
+    if (jobIndex === -1) return false;
 
     const job = this.queue[jobIndex];
+    const isActive = (this.currentJob && this.currentJob.id === jobId) ||
+      ['Pending', 'Fetching', 'Processing'].includes(job.status);
+    if (!isActive) return 'inactive';
+
     if (this.currentJob && this.currentJob.id === jobId) {
       this._killProcessGroup(this.currentJob.process);
       job.cancelled = true;
       job.process = null;
       this.currentJob = null;
       this.isProcessing = false;
-      this._cleanupPartialFiles(job);
+      this._cleanupJobTemp(job);
     }
 
     job.status = 'Failed';
+    job.stage = 'failed';
     job.error = 'Cancelled by user';
     this._drainEligible = false;
     this._saveQueueState();
@@ -212,6 +259,55 @@ class DownloadManager {
     if (!this.isProcessing) {
       this._processNext();
     }
+    return true;
+  }
+
+  /** Re-queue a Failed job as Pending so it can be retried. Returns null if missing. */
+  retryJob(jobId) {
+    const job = this.queue.find((j) => j.id === jobId);
+    if (!job) return null;
+    if (this.currentJob && this.currentJob.id === jobId) return 'inactive';
+    if (job.status !== 'Failed') return 'inactive';
+    job.status = 'Pending';
+    job.stage = 'queued';
+    job.progress = 0;
+    job.downloadedBytes = null;
+    job.totalBytes = null;
+    job.speed = '';
+    job.eta = '';
+    job.elapsed = null;
+    job.error = '';
+    job.warnings = [];
+    job.outputPath = '';
+    job.tempDir = '';
+    job.startedAt = null;
+    job.cancelled = false;
+    job.process = null;
+    this._saveQueueState();
+    this._emit('queue-updated', this._getSafeQueue());
+    if (!this.isProcessing) this._processNext();
+    return job;
+  }
+
+  /** Remove a job from the queue (kills it first if active). */
+  removeJob(jobId) {
+    const idx = this.queue.findIndex((j) => j.id === jobId);
+    if (idx === -1) return false;
+    const job = this.queue[idx];
+    if (this.currentJob && this.currentJob.id === jobId) {
+      this._killProcessGroup(this.currentJob.process);
+      job.cancelled = true;
+      try { this._cleanupJobTemp(job); } catch (_) {}
+      this.currentJob = null;
+      this.isProcessing = false;
+    } else if (job.tempDir) {
+      try { this._cleanupJobTemp(job); } catch (_) {}
+    }
+    this.queue.splice(idx, 1);
+    this._saveQueueState();
+    this._emit('queue-updated', this._getSafeQueue());
+    if (!this.isProcessing) this._processNext();
+    return true;
   }
 
   /**
@@ -241,10 +337,25 @@ class DownloadManager {
   }
 
   /**
-   * Remove yt-dlp's partial (incomplete) output files that belong to a
-   * cancelled download, so a later re-download of the same title isn't blocked
-   * by a leftover lock/partial file. Only removes *.part files written since the
-   * job started.
+   * Remove a job's private temp directory (per-job `-P temp:` staging).
+   * Cancelling used to delete every recent `*.part` file in the download
+   * directory, which could wipe a concurrent job's partial file. Scoping all
+   * intermediates to a per-job temp dir makes cancel cleanup exact.
+   */
+  _cleanupJobTemp(job) {
+    const dir = job && job.tempDir;
+    if (!dir) return;
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch (_) {
+      // Best effort — temp dirs live under downloadDir/.stow-tmp/ (hidden).
+    }
+    if (job) job.tempDir = '';
+  }
+
+  /**
+   * Legacy fallback: remove yt-dlp's partial files that predate per-job temp
+   * dirs. Scoped to files only (no directory walk beyond the download dir).
    */
   _cleanupPartialFiles(job) {
     if (!job || !config.downloadDir) return;
@@ -323,16 +434,32 @@ class DownloadManager {
       job.cancelled = true;
       this._killProcessGroup(job.process);
       job.process = null;
+      this._cleanupJobTemp(job);
       job.status = 'Pending';
+      job.stage = 'queued';
       job.progress = 0;
+      job.downloadedBytes = null;
+      job.totalBytes = null;
       job.speed = '';
       job.eta = '';
+      job.elapsed = null;
       job.error = '';
+      job.warnings = [];
       this.currentJob = null;
     }
 
     this.isProcessing = false;
     this._flushQueueState();
+  }
+
+  _getSettings() {
+    try {
+      // Lazily loaded so tests can stub it; returns {} when no settings file.
+      const { getSettings } = require('./settings');
+      return getSettings();
+    } catch (_) {
+      return this._settingsCache || {};
+    }
   }
 
   /**
@@ -353,16 +480,31 @@ class DownloadManager {
 
   _startDownload(job) {
     job.status = 'Fetching';
+    job.stage = 'fetching';
     job.startedAt = Date.now();
+    job.progress = 0;
+    job.downloadedBytes = null;
+    job.totalBytes = null;
+    job.speed = '';
+    job.eta = '';
+    job.elapsed = null;
+    job.error = '';
+    job.warnings = [];
     this._emit('queue-updated', this._getSafeQueue());
 
     let ytDlpPath;
     let ffmpegDir;
+    let jsRuntime = 'node';
+    let denoDir = '';
     try {
       ytDlpPath = getYtDlpPath();
       ffmpegDir = path.dirname(getFfmpegPath());
+      jsRuntime = getJsRuntime();
+      const denoPath = getDenoPath();
+      if (denoPath) denoDir = path.dirname(denoPath);
     } catch (err) {
       job.status = 'Failed';
+      job.stage = 'failed';
       job.error = err.message;
       this._saveQueueState();
       this._emit('queue-updated', this._getSafeQueue());
@@ -372,29 +514,50 @@ class DownloadManager {
       return;
     }
 
-    const outputTemplate = path.join(
-      config.downloadDir,
-      '%(title)s [%(id)s].%(ext)s'
-    );
+    // Per-job temp dir under the download dir (same filesystem, hidden from
+    // the library): all intermediates (.part, .webp, .temp) stay scoped to
+    // this job so cancel cleanup cannot touch a concurrent download.
+    // .stow-tmp/ starts with a dot so walkAudioFiles skips it.
+    let jobTempDir = '';
+    try {
+      const stagingRoot = path.join(config.downloadDir, '.stow-tmp');
+      fs.mkdirSync(stagingRoot, { recursive: true });
+      jobTempDir = fs.mkdtempSync(path.join(stagingRoot, `job-${job.id.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 32)}-`));
+      job.tempDir = jobTempDir;
+    } catch (err) {
+      job.status = 'Failed';
+      job.stage = 'failed';
+      job.error = `Could not create temp directory: ${err.message}`;
+      this._saveQueueState();
+      this._emit('queue-updated', this._getSafeQueue());
+      this.isProcessing = false;
+      this.currentJob = null;
+      this._processNext();
+      return;
+    }
 
-    const args = [
-      '--js-runtimes', 'node',
-      '--impersonate', 'chrome',
-      '--remote-components', 'ejs:github',
-      '--force-overwrites',
-      '-f', 'bestaudio',
-      '-x',
-      '--audio-format', 'opus',
-      '--embed-thumbnail',
-      '--embed-metadata',
-      '-o', outputTemplate,
-      '--no-playlist',
-      '--progress',
-      '--progress-template',
-      'download:[%(progress.percent)s|%(progress.speed)s|%(progress.eta)s]',
-      '--print', 'after_move:filepath',
-      '--', job.url,
-    ];
+    let cookiesPath = '';
+    try {
+      const settings = this._getSettings?.() || {};
+      if (settings.cookiesPath && fs.existsSync(settings.cookiesPath)) cookiesPath = settings.cookiesPath;
+      else {
+        const defaultCookies = path.join(config.configDir, 'cookies.txt');
+        if (fs.existsSync(defaultCookies)) cookiesPath = defaultCookies;
+      }
+      this._settingsCache = settings;
+    } catch (_) {}
+
+    const settings = this._settingsCache || {};
+    const args = buildYtDlpArgs({
+      url: job.url,
+      downloadDir: config.downloadDir,
+      tempDir: jobTempDir,
+      jsRuntime,
+      cookiesPath: cookiesPath || undefined,
+      embedChapters: Boolean(settings.embedChapters),
+      sponsorblock: settings.sponsorblock || null,
+      opusPreferred: settings.opusPreferred !== false,
+    });
 
     const childProc = cp.spawn(ytDlpPath, args, {
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -403,56 +566,117 @@ class DownloadManager {
       detached: process.platform !== 'win32',
       env: {
         ...process.env,
-        PATH: [ffmpegDir, process.env.PATH].filter(Boolean).join(path.delimiter),
+        PATH: [denoDir, ffmpegDir, process.env.PATH].filter(Boolean).join(path.delimiter),
       },
     });
 
     job.process = childProc;
     let stdoutBuffer = '';
+    let stderrBuffer = '';
     let finalOutputPath = '';
     let settled = false;
 
-    childProc.stdout.on('data', (data) => {
-      // Buffer incoming data and split into complete lines
-      stdoutBuffer += data.toString();
-      const lines = stdoutBuffer.split('\n');
-      // Keep the last (potentially incomplete) line in the buffer
-      stdoutBuffer = lines.pop() || '';
+    const emitProgress = () => {
+      this._emit('download-progress', {
+        id: job.id,
+        progress: job.progress,
+        downloadedBytes: job.downloadedBytes,
+        totalBytes: job.totalBytes,
+        speed: job.speed,
+        eta: job.eta,
+        elapsed: job.elapsed,
+        stage: job.stage,
+        status: job.status,
+      });
+    };
 
-      for (const rawLine of lines) {
-        const line = rawLine.trim();
-        if (!line) continue;
-
-        // Parse progress
-        if (line.startsWith('download:[')) {
-          const match = line.match(/\[([^|]+)\|([^|]*)\|([^\]]*)\]/);
-          if (match) {
-            // Format is resolved and bytes are flowing — move out of the
-            // info-fetch phase into the actual download phase.
-            if (job.status === 'Fetching') {
-              job.status = 'Processing';
-              this._emit('queue-updated', this._getSafeQueue());
-            }
-            job.progress = parseFloat(match[1]) || 0;
-            job.speed = match[2] || '';
-            job.eta = match[3] || '';
-            this._emit('download-progress', {
-              id: job.id,
-              progress: job.progress,
-              speed: job.speed,
-              eta: job.eta,
-            });
-          }
-        } else if (path.isAbsolute(line)) {
-          finalOutputPath = line;
+    const handleParsed = (parsed) => {
+      if (!parsed) return;
+      if (parsed.type === 'meta') {
+        if (parsed.title) job.title = parsed.title;
+        if (parsed.uploader) job.uploader = parsed.uploader;
+        if (parsed.duration != null) job.duration = parsed.duration;
+        if (parsed.thumbnail) job.thumbnailUrl = parsed.thumbnail;
+        if (parsed.webpageUrl) job.webpageUrl = parsed.webpageUrl;
+        if (parsed.uploadDate) job.uploadDate = parsed.uploadDate;
+        if (job.status === 'Fetching') {
+          job.status = 'Processing';
+          job.stage = 'downloading';
         }
+        this._emit('queue-updated', this._getSafeQueue());
+      } else if (parsed.type === 'progress') {
+        if (job.status === 'Fetching') {
+          job.status = 'Processing';
+          this._emit('queue-updated', this._getSafeQueue());
+        }
+        if (job.stage === 'fetching' || job.stage === 'queued') job.stage = 'downloading';
+        if (parsed.downloadedBytes != null) job.downloadedBytes = parsed.downloadedBytes;
+        if (parsed.totalBytes != null) job.totalBytes = parsed.totalBytes;
+        if (parsed.progress != null) job.progress = parsed.progress;
+        job.speed = parsed.speed != null ? String(parsed.speed) : job.speed;
+        job.eta = parsed.eta != null ? String(parsed.eta) : job.eta;
+        job.elapsed = parsed.elapsed;
+        emitProgress();
+      } else if (parsed.type === 'postprocess') {
+        const stage = parsed.status === 'started' || parsed.status === 'finished'
+          ? stageForPostprocessor(parsed.postprocessor)
+          : job.stage;
+        // Map shared stage names onto the queue stage vocabulary.
+        const normalized = /convert/i.test(stage) ? 'converting'
+          : /tag/i.test(stage) ? 'tagging'
+          : /cover/i.test(stage) ? 'cover'
+          : /finish/i.test(stage) ? 'finishing'
+          : /chapter|segment/i.test(stage) ? 'chapters'
+          : 'processing';
+        job.stage = parsed.status === 'finished' && /movefiles|move/i.test(parsed.postprocessor || '')
+          ? 'finishing'
+          : normalized;
+        if (job.status === 'Fetching') job.status = 'Processing';
+        this._emit('queue-updated', this._getSafeQueue());
+        emitProgress();
+      } else if (parsed.type === 'file') {
+        finalOutputPath = parsed.path;
+      }
+    };
+
+    childProc.stdout.on('data', (data) => {
+      // yt-dlp emits CR-separated progress fragments; split on both.
+      stdoutBuffer += data.toString();
+      const lines = splitOutputLines(stdoutBuffer);
+      // Keep the trailing incomplete fragment buffered.
+      stdoutBuffer = /[\r\n]$/.test(stdoutBuffer) ? '' : (lines.pop() || '');
+      for (const rawLine of lines) {
+        const parsed = parseLine(rawLine);
+        if (parsed) handleParsed(parsed);
       }
     });
 
     childProc.stderr.on('data', (data) => {
-      const line = data.toString().trim();
-      if (line && !line.startsWith('[')) {
-        job.error = line;
+      stderrBuffer += data.toString();
+      const lines = splitOutputLines(stderrBuffer);
+      stderrBuffer = /[\r\n]$/.test(stderrBuffer) ? '' : (lines.pop() || '');
+      for (const rawLine of lines) {
+        // yt-dlp progress templates (STOW_*) go to stderr, not stdout —
+        // parse them before error classification so they never become errors.
+        try {
+          const parsedStderr = parseLine(rawLine);
+          if (parsedStderr) { handleParsed(parsedStderr); continue; }
+        } catch (_) {}
+        const line = rawLine.trim();
+        if (!line) continue;
+        if (/^STOW_(META|PROGRESS|PP|FILE):/.test(line)) continue;
+        if (/^WARNING:/i.test(line)) {
+          const msg = line.replace(/^WARNING:\s*/i, '').slice(0, 500);
+          if (msg && !job.warnings.includes(msg)) {
+            job.warnings.push(msg);
+            if (job.warnings.length > 5) job.warnings.shift();
+          }
+        } else if (/^ERROR:/i.test(line)) {
+          job.error = line.replace(/^ERROR:\s*/i, '').slice(0, 500);
+        } else if (!line.startsWith('[')) {
+          // Keep the last meaningful stderr line as the failure reason.
+          job.error = line.slice(0, 500);
+        }
       }
     });
 
@@ -460,10 +684,39 @@ class DownloadManager {
       if (settled) return;
       settled = true;
 
+      // Flush any trailing fragment that never got a line terminator.
+      try {
+        if (stdoutBuffer && stdoutBuffer.trim()) {
+          const parsed = parseLine(stdoutBuffer);
+          if (parsed) handleParsed(parsed);
+        }
+      } catch (_) {}
+      try {
+        const tail = (stderrBuffer || '').trim();
+        if (tail) {
+          let parsedTail = null;
+          try { parsedTail = parseLine(tail); } catch (_) {}
+          if (parsedTail) { handleParsed(parsedTail); }
+          else if (!job.error) {
+            if (/^STOW_(META|PROGRESS|PP|FILE):/.test(tail)) {
+              // ignore - progress marker fragment
+            } else if (/^WARNING:/i.test(tail)) {
+              const msg = tail.replace(/^WARNING:\s*/i, '').slice(0, 500);
+              if (msg) job.warnings.push(msg);
+            } else if (/^ERROR:/i.test(tail)) {
+              job.error = tail.replace(/^ERROR:\s*/i, '').slice(0, 500);
+            } else if (!tail.startsWith('[')) {
+              job.error = tail.slice(0, 500);
+            }
+          }
+        }
+      } catch (_) {}
+
       // If the job was already cancelled (by cancelJob/cancelAll), skip processing
       // because the cancellation handler already restarted the queue.
       if (job.cancelled) {
         job.process = null;
+        this._cleanupJobTemp(job);
         this._saveQueueState();
         this._emit('queue-updated', this._getSafeQueue());
         return;
@@ -479,8 +732,10 @@ class DownloadManager {
 
         if (foundPath) {
           job.outputPath = foundPath;
-          job.title = path.basename(foundPath, path.extname(foundPath));
+          if (!job.title) job.title = path.basename(foundPath, path.extname(foundPath));
+          job.error = '';
           job.status = 'Complete';
+          job.stage = 'done';
           job.progress = 100;
           this._drainEligible = true;
           this._emit('download-complete', {
@@ -489,16 +744,21 @@ class DownloadManager {
           });
         } else {
           job.status = 'Failed';
-          job.error = 'Download completed but no audio file was found in the download directory';
+          job.stage = 'failed';
+          job.error = job.error || 'Download completed but no audio file was found in the download directory';
           this._drainEligible = false;
         }
       } else if (job.status !== 'Failed') {
         job.status = 'Failed';
+        job.stage = 'failed';
         job.error = job.error || `Process exited with code ${code}`;
         this._drainEligible = false;
+      } else {
+        job.stage = 'failed';
       }
 
       job.process = null;
+      this._cleanupJobTemp(job);
       this._saveQueueState();
       this._emit('queue-updated', this._getSafeQueue());
 
@@ -513,12 +773,15 @@ class DownloadManager {
 
       if (job.cancelled) {
         job.process = null;
+        this._cleanupJobTemp(job);
         return;
       }
 
       job.status = 'Failed';
+      job.stage = 'failed';
       job.error = err.message;
       job.process = null;
+      this._cleanupJobTemp(job);
       this._drainEligible = false;
       this._saveQueueState();
       this._emit('queue-updated', this._getSafeQueue());

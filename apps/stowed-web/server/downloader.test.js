@@ -58,6 +58,38 @@ require.cache[cpPath] = {
   exports: childProcessStub,
 };
 
+// ---- Stub ./binaries so no real yt-dlp/ffmpeg lookup is needed -------------
+// (downloader.js resolves tool paths at job start; without this the suite
+// fails on machines without bin/ or system tools installed.)
+const binariesPath = require.resolve('./binaries');
+require.cache[binariesPath] = {
+  id: binariesPath,
+  filename: binariesPath,
+  loaded: true,
+  exports: {
+    getYtDlpPath: () => '/fake/yt-dlp',
+    getFfmpegPath: () => '/fake/ffmpeg',
+    getFfprobePath: () => '/fake/ffprobe',
+    getJsRuntime: () => 'node',
+    getDenoPath: () => null,
+  },
+};
+
+// Stub ./settings so tests don't touch the real config dir settings.
+try {
+  const settingsPath = require.resolve('./settings');
+  require.cache[settingsPath] = {
+    id: settingsPath,
+    filename: settingsPath,
+    loaded: true,
+    exports: {
+      getSettings: () => ({}),
+      saveSettings: () => ({}),
+      setCookiesState: () => ({}),
+    },
+  };
+} catch (_) {}
+
 const DownloadManager = require('./downloader');
 const QUEUE_FILE = path.join(process.env.STOW_CONFIG_DIR, 'queue-state.json');
 
@@ -77,8 +109,27 @@ function makeOutputFile(name) {
 }
 
 // Drive a fake child to a successful exit with a real output file on disk.
-function completeChild(child, outputPath) {
-  child.stdout.emit('data', Buffer.from(`download:[99.9|1024|1]\n${outputPath}\n`));
+// Uses the real STOW_* markers and CR-separated progress (as yt-dlp emits).
+function completeChild(child, outputPath, meta = {}) {
+  const SEP = '\x1f';
+  const m = [
+    meta.id || 'abc',
+    meta.title || 'Song One',
+    meta.uploader || 'Uploader',
+    meta.duration != null ? String(meta.duration) : '213',
+    meta.webpageUrl || 'https://example.com/watch?v=abc',
+    meta.uploadDate || '20240101',
+    meta.thumbnail || '',
+  ].join(SEP);
+  // Simulate CR-separated live progress followed by meta + file markers.
+  child.stdout.emit('data', Buffer.from(
+    `STOW_META:${m}\r` +
+    `STOW_PROGRESS:1024|3433755|3433755|1000|5|1.2\r` +
+    `STOW_PROGRESS:3433755|3433755|3433755|2000|0|2.0\r` +
+    `STOW_PP:started|ExtractAudio\n` +
+    `STOW_PP:finished|ExtractAudio\n` +
+    `STOW_FILE:${outputPath}\n`
+  ));
   child.emit('close', 0);
 }
 
@@ -124,8 +175,43 @@ test('status transitions Fetching -> Processing once bytes flow', () => {
   m.addJobs(['https://s2']);
   const child = childFor('https://s2');
   assert.equal(m.getQueue()[0].status, 'Fetching');
-  child.stdout.emit('data', Buffer.from('download:[12.5|2048|30]\n'));
-  assert.equal(m.getQueue()[0].status, 'Processing');
+  // Real yt-dlp emits CR-separated STOW_PROGRESS fragments.
+  child.stdout.emit('data', Buffer.from('STOW_PROGRESS:15360|3433755|3433755|1000|30|1.0\rSTOW_PROGRESS:31744|3433755|3433755|1200|20|1.5\r'));
+  const q = m.getQueue()[0];
+  assert.equal(q.status, 'Processing');
+  assert.equal(q.stage, 'downloading');
+  assert.ok(q.progress > 0);
+});
+
+test('before_dl meta fills title/uploader/duration/thumbnail', () => {
+  const m = freshManager();
+  m.addJobs(['https://meta1']);
+  const child = childFor('https://meta1');
+  const SEP = '\x1f';
+  child.stdout.emit('data', Buffer.from(
+    `STOW_META:vid1${SEP}My Title${SEP}My Uploader${SEP}123${SEP}https://example.com/v/vid1${SEP}20240102${SEP}https://example.com/t.jpg\n`
+  ));
+  const q = m.getQueue()[0];
+  assert.equal(q.title, 'My Title');
+  assert.equal(q.uploader, 'My Uploader');
+  assert.equal(q.duration, 123);
+  assert.equal(q.thumbnailUrl, 'https://example.com/t.jpg');
+  assert.equal(q.status, 'Processing');
+});
+
+test('spawns yt-dlp with newline, per-job temp, and opus-preferred format', () => {
+  const m = freshManager();
+  m.addJobs(['https://args1']);
+  const child = childFor('https://args1');
+  assert.ok(child, 'yt-dlp should have been spawned');
+  assert.ok(child.args.includes('--newline'), 'should pass --newline');
+  assert.ok(child.args.includes('--color'), 'should pass --color never');
+  assert.ok(child.args.includes('bestaudio[acodec=opus]/bestaudio'), 'should prefer Opus');
+  assert.ok(!child.args.includes('ejs:github'), 'should not fetch remote EJS components');
+  const tempIdx = child.args.indexOf('-P');
+  assert.ok(tempIdx !== -1, 'should set -P paths');
+  const job = m.getQueue()[0];
+  assert.ok(job.tempDir && job.tempDir.length > 0, 'job should own a temp dir');
 });
 
 test('cancelling the active job starts the next and does not announce complete', () => {
@@ -203,5 +289,64 @@ test('queue persists across restarts; interrupted jobs resume as Pending', async
   assert.equal(fetching.progress, 0);
   assert.equal(fetching.speed, '');
   assert.equal(fetching.error, '');
+});
+
+test('cancelJob only cancels active jobs (inactive returns inactive)', () => {
+  const m = freshManager();
+  m.addJobs(['https://active1']);
+  const active = m.getQueue()[0];
+  assert.equal(m.cancelJob(active.id), true);
+  assert.equal(m.getQueue().find((j) => j.id === active.id).status, 'Failed');
+  // Cancelling again (now Failed) is not actionable.
+  assert.equal(m.cancelJob(active.id), 'inactive');
+  assert.equal(m.cancelJob('nope'), false);
+});
+
+test('retryJob only retries Failed jobs', () => {
+  const m = freshManager();
+  m.addJobs(['https://r1']);
+  const pending = m.getQueue()[0];
+  assert.equal(m.retryJob(pending.id), 'inactive');
+  assert.equal(m.retryJob('nope'), null);
+  // Fail it then retry.
+  const child = childFor('https://r1');
+  child.stderr.emit('data', Buffer.from('boom'));
+  child.emit('close', 1);
+  const failed = m.getQueue()[0];
+  assert.equal(failed.status, 'Failed');
+  const retried = m.retryJob(failed.id);
+  assert.ok(retried && ['Pending', 'Fetching', 'Processing'].includes(retried.status));
+});
+
+test('removeJob returns false for missing jobs', () => {
+  const m = freshManager();
+  m.addJobs(['https://rm1']);
+  const job = m.getQueue()[0];
+  assert.equal(m.removeJob('nope'), false);
+  assert.equal(m.removeJob(job.id), true);
+});
+
+test('stderr STOW_ markers are parsed, never stored as errors', () => {
+  const m = freshManager();
+  m.addJobs(['https://stderr1']);
+  const child = childFor('https://stderr1');
+  const SEP = '\x1f';
+  child.stderr.emit('data', Buffer.from(
+    `STOW_META:vid1${SEP}T${SEP}U${SEP}123${SEP}https://example.com/v${SEP}20240101${SEP}\n` +
+    `STOW_PROGRESS:1024|2048|2048|500|5|1.0\n` +
+    `STOW_PP:finished|MoveFiles\n`
+  ));
+  const q = m.getQueue()[0];
+  assert.equal(q.title, 'T');
+  assert.equal(q.error, '');
+  assert.equal(q.status, 'Processing');
+});
+
+test('per-job temp dirs stage under downloadDir/.stow-tmp/', () => {
+  const m = freshManager();
+  m.addJobs(['https://tmp1']);
+  const job = m.getQueue()[0];
+  assert.ok(job.tempDir.includes('.stow-tmp'), `temp ${job.tempDir} should be under .stow-tmp`);
+  assert.ok(job.tempDir.startsWith(process.env.STOW_DOWNLOAD_DIR), 'temp must share filesystem with downloads');
 });
 

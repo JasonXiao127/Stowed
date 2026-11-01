@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { XIcon } from '@stowed/shared-ui';
 
 const EMPTY_TAGS = {
   title: '',
@@ -15,8 +16,11 @@ export default function MetadataEditor({ filePath, onClose, showToast }) {
   const [coverArtUrl, setCoverArtUrl] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [loadError, setLoadError] = useState(null);
   const coverArtUrlRef = useRef(null);
+  const reqIdRef = useRef(0);
   const mountedRef = useRef(true);
+  const initialTagsRef = useRef(EMPTY_TAGS);
 
   // Track mount state to avoid setting state on unmounted component
   useEffect(() => {
@@ -48,13 +52,24 @@ export default function MetadataEditor({ filePath, onClose, showToast }) {
   const loadMetadata = useCallback(async (path) => {
     if (!path) return;
 
+    // Ignore stale responses when the user switches files mid-load, so an
+    // older file's tags can never overwrite the newly selected file.
+    const reqId = reqIdRef.current + 1;
+    reqIdRef.current = reqId;
     setIsLoading(true);
+    setLoadError(null);
+    // Clear stale state so switching files never flashes the previous
+    // file's tags or cover while the new file loads.
+    setTags({ ...EMPTY_TAGS });
+    setCoverArt(null);
+    setCoverArtUrl(null);
     revokeCoverArtUrl();
     try {
       const result = await window.electronAPI.readMetadata(path);
-      if (!mountedRef.current) return; // component unmounted during load
+      if (!mountedRef.current || reqIdRef.current !== reqId) return; // stale
 
-      setTags(result.tags || EMPTY_TAGS);
+      setTags({ ...EMPTY_TAGS, ...(result.tags || {}) });
+      initialTagsRef.current = { ...EMPTY_TAGS, ...(result.tags || {}) };
 
       const art = result.coverArt || null;
       setCoverArt(art);
@@ -71,11 +86,14 @@ export default function MetadataEditor({ filePath, onClose, showToast }) {
         setCoverArtUrl(null);
       }
     } catch (err) {
-      if (!mountedRef.current) return;
+      if (!mountedRef.current || reqIdRef.current !== reqId) return;
       console.error('[MetadataEditor] loadMetadata error:', err);
+      // Keep the form hidden until a successful load: saving the empty
+      // defaults over a file whose real tags failed to read would wipe them.
+      setLoadError(err.message || 'Failed to read metadata');
       showToast(`Failed to read metadata: ${err.message}`, 'error');
     } finally {
-      if (mountedRef.current) {
+      if (mountedRef.current && reqIdRef.current === reqId) {
         setIsLoading(false);
       }
     }
@@ -90,17 +108,43 @@ export default function MetadataEditor({ filePath, onClose, showToast }) {
     loadMetadata(filePath);
   }, [filePath, loadMetadata]);
 
+  // One guarded close for Escape, backdrop click, and Close button.
+  const requestClose = useCallback(() => {
+    const dirty = JSON.stringify(tags) !== JSON.stringify(initialTagsRef.current);
+    if (dirty && !window.confirm('Discard unsaved tag changes?')) return;
+    onClose?.();
+  }, [tags, onClose]);
+
+  useEffect(() => {
+    window.__stowRequestMetadataClose = requestClose;
+    return () => {
+      if (window.__stowRequestMetadataClose === requestClose) {
+        delete window.__stowRequestMetadataClose;
+      }
+    };
+  }, [requestClose]);
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      requestClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [requestClose]);
+
   const handleChange = (field) => (e) => {
     setTags((prev) => ({ ...prev, [field]: e.target.value }));
   };
 
   const handleSave = async () => {
-    if (!filePath) return;
+    if (!filePath || loadError) return;
 
     setIsSaving(true);
     try {
       await window.electronAPI.writeMetadata(filePath, tags, null);
-      showToast('Metadata saved successfully!', 'success');
+      initialTagsRef.current = { ...tags };
+      showToast('Metadata saved', 'success');
     } catch (err) {
       showToast(`Failed to save metadata: ${err.message}`, 'error');
     } finally {
@@ -109,13 +153,14 @@ export default function MetadataEditor({ filePath, onClose, showToast }) {
   };
 
   const handleChangeThumbnail = async () => {
+    if (loadError) return;
     try {
       const imagePath = await window.electronAPI.openImageDialog();
       if (imagePath) {
         setIsSaving(true);
         await window.electronAPI.writeMetadata(filePath, tags, imagePath);
         // Show success toast BEFORE reloading metadata to avoid double-toast risk
-        showToast('Thumbnail updated successfully!', 'success');
+        showToast('Cover art updated', 'success');
         // Clear current cover art so it doesn't flash stale image during reload
         setCoverArtUrl(null);
         setCoverArt(null);
@@ -133,8 +178,10 @@ export default function MetadataEditor({ filePath, onClose, showToast }) {
     <>
       {/* Modal Header */}
       <div className="modal-header">
-        <h2>Metadata Editor</h2>
-        <button className="modal-close-btn" onClick={onClose}>✕</button>
+        <div className="modal-title-wrap">
+          <h2 title={filePath}>{(filePath || '').split('/').filter(Boolean).pop() || 'Metadata'}</h2>
+        </div>
+        <button className="modal-close-btn" onClick={requestClose} aria-label="Close metadata editor"><XIcon size={16} /></button>
       </div>
 
       {/* Modal Body */}
@@ -149,6 +196,19 @@ export default function MetadataEditor({ filePath, onClose, showToast }) {
         ) : isLoading ? (
           <div className="metadata-empty">
             <div>Loading metadata...</div>
+          </div>
+        ) : loadError ? (
+          <div className="metadata-empty">
+            <div>Failed to read metadata</div>
+            <div className="sub">{loadError}</div>
+            <div className="form-actions form-actions-save">
+              <button
+                className="btn btn-secondary btn-small"
+                onClick={() => loadMetadata(filePath)}
+              >
+                Retry
+              </button>
+            </div>
           </div>
         ) : (
           <div className="metadata-panel">
@@ -252,9 +312,9 @@ export default function MetadataEditor({ filePath, onClose, showToast }) {
                   <button
                     className="btn btn-primary"
                     onClick={handleSave}
-                    disabled={isSaving}
+                    disabled={isSaving || JSON.stringify(tags) === JSON.stringify(initialTagsRef.current)}
                   >
-                    {isSaving ? 'Saving...' : 'Save Metadata'}
+                    {isSaving ? 'Saving…' : 'Save changes'}
                   </button>
                 </div>
               </div>

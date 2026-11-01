@@ -70,8 +70,58 @@ function setupDownloadHandlers(downloadManager) {
 
   // Cancel a specific job
   ipcMain.handle('cancel-job', (event, jobId) => {
-    downloadManager.cancelJob(jobId);
+    const result = downloadManager.cancelJob(jobId);
+    if (result === false) throw new Error('Job not found');
+    if (result === 'inactive') throw new Error('Only active jobs can be cancelled');
     return true;
+  });
+
+  // Retry / remove (queue cards)
+  ipcMain.handle('retry-job', (event, jobId) => {
+    const result = downloadManager.retryJob ? downloadManager.retryJob(jobId) : null;
+    if (!result) throw new Error('Job not found');
+    if (result === 'inactive') throw new Error('Only failed jobs can be retried');
+    const { process: _p, cancelled: _c, ...safe } = result;
+    return safe;
+  });
+  ipcMain.handle('remove-job', (event, jobId) => {
+    const ok = downloadManager.removeJob ? downloadManager.removeJob(jobId) : false;
+    if (!ok) throw new Error('Job not found');
+    return true;
+  });
+
+  // yt-dlp system status + updater (desktop rolling nightly)
+  ipcMain.handle('ytdlp-system', () => {
+    try {
+      const { getYtDlpPath, getJsRuntime, getDenoPath } = require('../binaries');
+      const { parseVersion } = require('@stowed/core');
+      const { spawnSync } = require('child_process');
+      let version = '';
+      try {
+        const r = spawnSync(getYtDlpPath(), ['--version'], { encoding: 'utf8', timeout: 15000 });
+        version = parseVersion((r.stdout || '') + (r.stderr || ''));
+      } catch (_) {}
+      return {
+        ytdlp: { version, jsRuntime: getJsRuntime(), denoAvailable: Boolean(getDenoPath()) },
+      };
+    } catch (e) {
+      return { ytdlp: { version: '', error: e.message } };
+    }
+  });
+  ipcMain.handle('ytdlp-check-update', async () => {
+    const updater = require('../ytdlpUpdater');
+    // Skip network check when a download is active.
+    if (downloadManager.currentJob) return { updateAvailable: false, busy: true, current: updater.currentVersion() };
+    return updater.checkForUpdate();
+  });
+  ipcMain.handle('ytdlp-update', async () => {
+    if (downloadManager.currentJob) throw new Error('Cannot update while a download is running');
+    const updater = require('../ytdlpUpdater');
+    return updater.performUpdate();
+  });
+  ipcMain.handle('ytdlp-rollback', async () => {
+    const updater = require('../ytdlpUpdater');
+    return updater.rollback();
   });
 
   // Get current queue state

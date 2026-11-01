@@ -1,6 +1,8 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { ThemeProvider } from '@stowed/shared-ui';
+import '@fontsource-variable/instrument-sans';
+import '@stowed/shared-ui/tokens.css';
 import App from './App';
 import './styles.css';
 

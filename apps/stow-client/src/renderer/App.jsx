@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useTheme, UrlInput, QueuePanel } from '@stowed/shared-ui';
+import { useTheme, UrlInput, QueuePanel, SunIcon, MoonIcon, XIcon, FolderIcon } from '@stowed/shared-ui';
 import MetadataEditor from './components/MetadataEditor';
 
 export default function App() {
@@ -11,19 +11,19 @@ export default function App() {
   const [clearing, setClearing] = useState(false);
   const [toast, setToast] = useState(null);
 
+  const dismissToast = useCallback(() => setToast(null), []);
+
   const showToast = useCallback((message, type = 'success') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3000);
   }, []);
 
-  // Load initial queue state
   useEffect(() => {
     if (window.electronAPI) {
       window.electronAPI.getQueue().then(setQueue).catch(console.error);
     }
   }, []);
 
-  // Listen for queue updates from main process
   useEffect(() => {
     if (!window.electronAPI) return;
 
@@ -35,18 +35,28 @@ export default function App() {
       setQueue((prev) =>
         prev.map((job) =>
           job.id === progress.id
-            ? { ...job, progress: progress.progress, speed: progress.speed, eta: progress.eta }
+            ? {
+                ...job,
+                progress: progress.progress ?? job.progress,
+                downloadedBytes: progress.downloadedBytes ?? job.downloadedBytes,
+                totalBytes: progress.totalBytes ?? job.totalBytes,
+                speed: progress.speed ?? job.speed,
+                eta: progress.eta ?? job.eta,
+                elapsed: progress.elapsed ?? job.elapsed,
+                stage: progress.stage || job.stage,
+                status: progress.status || job.status,
+              }
             : job
         )
       );
     });
 
     const cleanupComplete = window.electronAPI.onDownloadComplete((result) => {
-      showToast(`Download complete: ${result.outputPath}`, 'success');
+      showToast(`Downloaded ${(result.outputPath || '').split('/').pop()}`, 'success');
     });
 
     const cleanupAllDone = window.electronAPI.onAllDownloadsComplete(() => {
-      showToast('All downloads complete!', 'success');
+      showToast('All downloads finished', 'success');
     });
 
     return () => {
@@ -61,7 +71,7 @@ export default function App() {
     try {
       const result = await window.electronAPI.startDownloads(urls);
       if (result && result.skipped > 0) {
-        showToast(`Skipped ${result.skipped} duplicate(s) — URL(s) already in the active download queue (not a program error)`, 'warning');
+        showToast(`Skipped ${result.skipped} duplicate(s) — already in the queue`, 'warning');
       }
     } catch (err) {
       showToast(`Failed to start downloads: ${err.message}`, 'error');
@@ -114,6 +124,25 @@ export default function App() {
     }
   };
 
+  const handleRetryJob = async (jobId) => {
+    try {
+      if (window.electronAPI.retryJob) await window.electronAPI.retryJob(jobId);
+    } catch (err) {
+      showToast(`Failed to retry job: ${err.message}`, 'error');
+    }
+  };
+
+  const handleRemoveJob = async (jobId) => {
+    try {
+      if (window.electronAPI.removeJob) {
+        await window.electronAPI.removeJob(jobId);
+        setQueue((prev) => prev.filter((j) => j.id !== jobId));
+      }
+    } catch (err) {
+      showToast(`Failed to remove job: ${err.message}`, 'error');
+    }
+  };
+
   const handleOpenFile = async () => {
     try {
       const filePath = await window.electronAPI.openFileDialog();
@@ -145,66 +174,71 @@ export default function App() {
   };
 
   const hasQueue = queue.length > 0;
+  const completedCount = queue.filter((j) => j.status === 'Complete' && j.outputPath).length;
 
   return (
     <div className="app-container">
-      {/* Center section: title + search bar */}
       <div className={`center-section${hasQueue ? ' has-queue' : ''}`}>
-        {!hasQueue && <div className="center-title">Stow</div>}
+        {!hasQueue && (
+          <>
+            <div className="center-title">Download audio from YouTube</div>
+            <p className="hero-sub">Paste a link. Get a tagged Opus file.</p>
+          </>
+        )}
         <UrlInput onStartDownloads={handleStartDownloads} />
       </div>
 
-      {/* Queue section: below the search bar */}
       <div className="queue-section">
         <QueuePanel
           queue={queue}
           onCancelAll={handleCancelAll}
           onCancelJob={handleCancelJob}
+          onRetryJob={handleRetryJob}
+          onRemoveJob={handleRemoveJob}
           onEditFile={handleEditDownloadedFile}
           onShowInFolder={handleShowInFolder}
+          thumbUrlFor={(job) => job?.thumbnailUrl || ''}
         />
       </div>
 
-      {/* Clear Confirmation Dialog */}
       {showClearConfirm && (
         <div className="modal-overlay" onClick={(e) => {
           if (e.target === e.currentTarget) setShowClearConfirm(false);
         }}>
-          <div className="modal-dialog" style={{ maxWidth: '400px' }}>
-            <div style={{ padding: '24px 20px 20px' }}>
-              <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '8px' }}>
-                Clear all downloads?
+          <div className="modal-dialog modal-dialog-narrow" role="dialog" aria-modal="true" aria-label="Clear downloads">
+            <div className="confirm-dialog">
+              <h3 className="confirm-title">
+                Clear downloads?
               </h3>
-              <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '20px', lineHeight: '1.5' }}>
-                {queue.filter(j => j.status === 'Complete' && j.outputPath).length > 0
-                  ? `There ${queue.filter(j => j.status === 'Complete' && j.outputPath).length === 1 ? 'is' : 'are'} ${queue.filter(j => j.status === 'Complete' && j.outputPath).length} completed download(s) with audio files on disk.`
+              <p className="confirm-text">
+                {completedCount > 0
+                  ? `There ${completedCount === 1 ? 'is' : 'are'} ${completedCount} completed download(s) with audio files on disk.`
                   : 'No completed downloads with files to clean up.'}
               </p>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <div style={{ display: 'flex', gap: '8px' }}>
+              <div className="confirm-actions">
+                <div className="confirm-row">
                   <button
-                    className="btn btn-secondary"
-                    style={{ flex: 1, textAlign: 'center' }}
+                    className="btn btn-ghost btn-block"
                     onClick={() => setShowClearConfirm(false)}
+                    disabled={clearing}
                   >
                     Cancel
                   </button>
                   <button
-                    className="btn btn-secondary"
-                    style={{ flex: 1, textAlign: 'center' }}
+                    className="btn btn-secondary btn-block"
                     onClick={() => handleClearConfirm(false)}
+                    disabled={clearing}
                   >
-                    Clear List Only
+                    {clearing ? 'Clearing…' : 'Clear list'}
                   </button>
                 </div>
-                {queue.filter(j => j.status === 'Complete' && j.outputPath).length > 0 && (
+                {completedCount > 0 && (
                   <button
-                    className="btn btn-danger"
-                    style={{ width: '100%', padding: '12px 20px', fontSize: '15px', fontWeight: 700 }}
+                    className="btn btn-danger btn-block confirm-danger"
                     onClick={() => handleClearConfirm(true)}
                     disabled={clearing}
                   >
-                    Clear & Delete Files
+                    {clearing ? 'Clearing…' : 'Clear and delete files'}
                   </button>
                 )}
               </div>
@@ -213,28 +247,29 @@ export default function App() {
         </div>
       )}
 
-      {/* Bottom bar: Open File & Theme toggle */}
       <div className="bottom-bar">
         <div className="bottom-bar-left">
-          <button className="btn-icon" onClick={handleOpenFile}>
-            <span className="icon">📂</span>
-            Open File
+          <button className="btn-icon" onClick={handleOpenFile} aria-label="Open file">
+            <FolderIcon size={16} />
+            <span className="btn-icon-text">Open file</span>
           </button>
         </div>
         <div className="bottom-bar-right">
-          <button className="btn-icon" onClick={toggleTheme}>
-            <span className="icon">{theme === 'dark' ? '☀️' : '🌙'}</span>
-            {theme === 'dark' ? 'Light' : 'Dark'}
+          <button className="btn-icon" onClick={toggleTheme} aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`} title="Toggle theme">
+            {theme === 'dark' ? <SunIcon size={16} /> : <MoonIcon size={16} />}
+            <span className="btn-icon-text">{theme === 'dark' ? 'Light' : 'Dark'}</span>
           </button>
         </div>
       </div>
 
-      {/* Metadata Modal */}
       {showMetadata && (
         <div className="modal-overlay" onClick={(e) => {
-          if (e.target === e.currentTarget) handleCloseMetadata();
+          if (e.target === e.currentTarget) {
+            if (typeof window !== 'undefined' && window.__stowRequestMetadataClose) window.__stowRequestMetadataClose();
+            else handleCloseMetadata();
+          }
         }}>
-          <div className="modal-dialog">
+          <div className="modal-dialog modal-dialog-wide" role="dialog" aria-modal="true" aria-label="Metadata editor">
             <MetadataEditor
               filePath={selectedFile}
               onClose={handleCloseMetadata}
@@ -244,10 +279,15 @@ export default function App() {
         </div>
       )}
 
-      {/* Toast */}
       {toast && (
-        <div className={`toast ${toast.type}`}>
-          {toast.message}
+        <div className="toast-stack" aria-live="polite">
+          <div className={`toast ${toast.type}`} role="status">
+            <span className="toast-dot" aria-hidden="true" />
+            <span className="toast-msg">{toast.message}</span>
+            <button className="toast-close" onClick={dismissToast} aria-label="Dismiss notification">
+              <XIcon size={14} />
+            </button>
+          </div>
         </div>
       )}
     </div>

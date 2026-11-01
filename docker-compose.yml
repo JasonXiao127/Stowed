@@ -30,14 +30,15 @@ services:
       PUID: ${PUID:-1000}
       PGID: ${PGID:-1000}
       # Optional shared secret for LAN access. Blank = no auth (trusted LAN).
-      # STOW_API_KEY: ${STOW_API_KEY:-}
+      # Set STOW_API_KEY in your .env (see .env.example) to require it.
+      STOW_API_KEY: ${STOW_API_KEY:-}
       # Hostnames allowed to reach the API/WebSocket (DNS-rebinding defense).
       # Loopback + IP-literal access always works; only add if you open Stow via
       # a hostname, e.g. http://media-pc:5183 -> "media-pc:5183"
-      # STOW_ALLOWED_HOSTS: ${STOW_ALLOWED_HOSTS:-}
+      STOW_ALLOWED_HOSTS: ${STOW_ALLOWED_HOSTS:-}
       # SSRF guard: set to 1 to allow downloads from private/LAN addresses
       # (e.g. you intentionally download from another machine on your network).
-      # STOW_ALLOW_PRIVATE_IP_URLS: ${STOW_ALLOW_PRIVATE_IP_URLS:-}
+      STOW_ALLOW_PRIVATE_IP_URLS: ${STOW_ALLOW_PRIVATE_IP_URLS:-}
 
     # Downloaded audio files land in ./downloads and queue state in ./config.
     # Give this container the SAME uid:gid as your *arr stack, e.g. 1000:1000,
