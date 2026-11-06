@@ -28,7 +28,7 @@
     "@stowed/core": "*",
     "@stowed/shared-ui": "*",
     "express": "^4.21.2",
-    "multer": "^1.4.5-lts.1",
+    "multer": "^2.5.0",
     "music-metadata": "^11.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
