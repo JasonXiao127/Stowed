@@ -24,7 +24,7 @@ jobs:
     if: startsWith(github.ref_name, 'stowed-web-v')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: docker/setup-buildx-action@v3
 
@@ -71,7 +71,7 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v5
         with:
