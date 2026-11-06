@@ -1,6 +1,6 @@
 {
   "name": "stowed-web",
-  "version": "1.0.0",
+  "version": "1.0.3",
   "description": "Stowed Web - YouTube Audio Downloader & Tagger web service (Docker)",
   "main": "server/index.js",
   "scripts": {
