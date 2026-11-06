@@ -100,16 +100,6 @@ export default function SettingsPanel({ showToast }) {
           <span className="settings-label">Challenge support</span>
           <span className="settings-value">{challenge}</span>
         </div>
-        <label className="settings-check">
-          <input
-            type="checkbox"
-            checked={Boolean(settings?.autoUpdateYtDlp)}
-            disabled={saving}
-            onChange={(e) => save({ autoUpdateYtDlp: e.target.checked })}
-          />
-          <span>Daily yt-dlp update check</span>
-        </label>
-        <p className="form-hint">Desktop only. Web and Docker update on image rebuild.</p>
       </section>
 
       <section className="settings-section" aria-label="Downloads">

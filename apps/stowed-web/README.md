@@ -152,8 +152,9 @@ docker push maraudermarauder/stowed:1.0.2
   an embedded `METADATA_BLOCK_PICTURE` comment (written natively, since FFmpeg
   cannot mux an attached picture into Ogg). WAV, raw AAC and WebM cannot store
   cover art, so the cover picker is disabled for those.
-- **MusicBrainz lookup and waveform trim are web-only.** The desktop client has
-  neither the match picker/cover fetch nor the trim editor.
+- **Library, preview, MusicBrainz, waveform trim, chapters, settings and player
+  are web-only.** The desktop client is intentionally minimal: queue + metadata
+  editor, with automatic nightly yt-dlp updates.
 - All real-time progress is pushed over a WebSocket; the client reconnects and
   re-syncs the queue automatically.
 
@@ -207,8 +208,8 @@ The metadata editor is backed by four extra endpoints (all use the existing
 - `GET /api/system` — yt-dlp version, JS runtime (Deno/Node), EJS status,
   plus sanitized settings for the Settings panel.
 - `GET /api/settings` / `POST /api/settings` — `embedChapters` (bool),
-  `sponsorblock` (`null` or `remove:<cats>`/`mark:<cats>`), `opusPreferred`,
-  `autoUpdateYtDlp`. Unknown keys are ignored.
+  `sponsorblock` (`null` or `remove:<cats>`/`mark:<cats>`), `opusPreferred`.
+  Unknown keys are ignored.
 - `GET /api/cookies/status`, `POST /api/cookies`, `DELETE /api/cookies` —
   Netscape cookies.txt for age-restricted videos (stored `0600`, never echoed).
 - `POST /api/inspect` `{ url, playlistEnd? }` — video/playlist preview via

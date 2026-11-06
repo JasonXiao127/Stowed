@@ -9,12 +9,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   removeJob: (jobId) => ipcRenderer.invoke('remove-job', jobId),
   getQueue: () => ipcRenderer.invoke('get-queue'),
 
-  // yt-dlp runtime diagnostics + updater
-  getSystem: () => ipcRenderer.invoke('ytdlp-system'),
-  checkYtDlpUpdate: () => ipcRenderer.invoke('ytdlp-check-update'),
-  updateYtDlp: () => ipcRenderer.invoke('ytdlp-update'),
-  rollbackYtDlp: () => ipcRenderer.invoke('ytdlp-rollback'),
-
   // Metadata operations
   readMetadata: (filePath) => ipcRenderer.invoke('read-metadata', filePath),
   writeMetadata: (filePath, tags, newThumbnailPath) =>

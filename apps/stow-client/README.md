@@ -31,6 +31,13 @@ No web app, no ads, no “download our app” pop-ups, no file size limits. Just
 - Cross-platform desktop app (Windows, macOS, Linux) built with Electron
 - *macOS and Linux are experimental and have not been tested extensively 
 
+## Scope
+
+Stow Client is the minimal desktop client: download queue, metadata editor, and
+automatic nightly yt-dlp updates. Library browsing, playlist preview,
+MusicBrainz lookup, waveform trim, chapters view, the player, and the Settings
+panel are web-only features (see `apps/stowed-web`).
+
 ## How It Works
 
 1. Paste one or more YouTube URLs.

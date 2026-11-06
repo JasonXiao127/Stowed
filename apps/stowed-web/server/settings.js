@@ -12,7 +12,6 @@ const DEFAULTS = {
   // cookies.txt handling (Netscape format). Stored at configDir/cookies.txt.
   cookiesConfigured: false,
   cookiesUpdatedAt: null,
-  autoUpdateYtDlp: true,
 };
 
 function settingsPath() {
@@ -64,7 +63,6 @@ function saveSettings(patch) {
     throw new Error('Invalid sponsorblock value (expected remove:<cats> or mark:<cats>)');
   }
   if (typeof next.opusPreferred !== 'boolean') throw new Error('opusPreferred must be a boolean');
-  if (typeof next.autoUpdateYtDlp !== 'boolean') throw new Error('autoUpdateYtDlp must be a boolean');
   // cookiesConfigured/cookiesUpdatedAt are managed by the cookies endpoints.
   next.cookiesConfigured = Boolean(current.cookiesConfigured);
   next.cookiesUpdatedAt = current.cookiesUpdatedAt || null;

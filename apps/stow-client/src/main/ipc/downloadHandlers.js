@@ -90,40 +90,6 @@ function setupDownloadHandlers(downloadManager) {
     return true;
   });
 
-  // yt-dlp system status + updater (desktop rolling nightly)
-  ipcMain.handle('ytdlp-system', () => {
-    try {
-      const { getYtDlpPath, getJsRuntime, getDenoPath } = require('../binaries');
-      const { parseVersion } = require('@stowed/core');
-      const { spawnSync } = require('child_process');
-      let version = '';
-      try {
-        const r = spawnSync(getYtDlpPath(), ['--version'], { encoding: 'utf8', timeout: 15000 });
-        version = parseVersion((r.stdout || '') + (r.stderr || ''));
-      } catch (_) {}
-      return {
-        ytdlp: { version, jsRuntime: getJsRuntime(), denoAvailable: Boolean(getDenoPath()) },
-      };
-    } catch (e) {
-      return { ytdlp: { version: '', error: e.message } };
-    }
-  });
-  ipcMain.handle('ytdlp-check-update', async () => {
-    const updater = require('../ytdlpUpdater');
-    // Skip network check when a download is active.
-    if (downloadManager.currentJob) return { updateAvailable: false, busy: true, current: updater.currentVersion() };
-    return updater.checkForUpdate();
-  });
-  ipcMain.handle('ytdlp-update', async () => {
-    if (downloadManager.currentJob) throw new Error('Cannot update while a download is running');
-    const updater = require('../ytdlpUpdater');
-    return updater.performUpdate();
-  });
-  ipcMain.handle('ytdlp-rollback', async () => {
-    const updater = require('../ytdlpUpdater');
-    return updater.rollback();
-  });
-
   // Get current queue state
   ipcMain.handle('get-queue', () => {
     return downloadManager.getQueue();

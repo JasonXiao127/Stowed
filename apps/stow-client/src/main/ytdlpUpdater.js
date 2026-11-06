@@ -138,7 +138,8 @@ async function checkForUpdate() {
 
 /**
  * Download the latest nightly to the user bin dir (atomic + SHA verified).
- * Keeps a `.prev` rollback copy. Only call when no download is running.
+ * Keeps a `.prev` backup copy for manual recovery. Only call when no download
+ * is running.
  */
 async function performUpdate(onProgress) {
   const dir = getUserBinDir();
@@ -211,20 +212,10 @@ async function performUpdate(onProgress) {
   return { version, path: dest };
 }
 
-function rollback() {
-  const dest = path.join(getUserBinDir(), process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp');
-  const prev = `${dest}.prev`;
-  if (!fs.existsSync(prev)) throw new Error('No previous binary to roll back to');
-  fs.copyFileSync(prev, dest);
-  if (process.platform !== 'win32') fs.chmodSync(dest, 0o755);
-  return { version: currentVersion(), path: dest };
-}
-
 module.exports = {
   currentBinaryPath,
   currentVersion,
   checkForUpdate,
   performUpdate,
-  rollback,
   getUserBinDir,
 };

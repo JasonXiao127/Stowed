@@ -656,7 +656,6 @@ function setupRoutes(app, downloadManager) {
           embedChapters: Boolean(settings.embedChapters),
           sponsorblock: settings.sponsorblock || null,
           opusPreferred: settings.opusPreferred !== false,
-          autoUpdateYtDlp: settings.autoUpdateYtDlp !== false,
           cookiesConfigured: Boolean(settings.cookiesConfigured),
           cookiesUpdatedAt: settings.cookiesUpdatedAt || null,
         },
@@ -677,7 +676,6 @@ function setupRoutes(app, downloadManager) {
         embedChapters: patch.embedChapters,
         sponsorblock: patch.sponsorblock === undefined ? undefined : (patch.sponsorblock || null),
         opusPreferred: patch.opusPreferred,
-        autoUpdateYtDlp: patch.autoUpdateYtDlp,
       });
       res.json(next);
     } catch (err) {
