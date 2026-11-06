@@ -29,7 +29,7 @@
     "@stowed/core": "*",
     "@stowed/shared-ui": "*",
     "electron-squirrel-startup": "^1.0.1",
-    "music-metadata": "^11.0.0",
+    "music-metadata": "^12.3.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   }
