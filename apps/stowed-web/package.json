@@ -19,6 +19,7 @@
   "type": "commonjs",
   "devDependencies": {
     "@vitejs/plugin-react": "^4.0.0",
+    "adm-zip": "^0.6.0",
     "cross-env": "^7.0.3",
     "vite": "^6.0.0"
   },
@@ -26,7 +27,6 @@
     "@fontsource-variable/instrument-sans": "^5.3.0",
     "@stowed/core": "*",
     "@stowed/shared-ui": "*",
-    "adm-zip": "^0.6.0",
     "express": "^4.21.2",
     "multer": "^1.4.5-lts.1",
     "music-metadata": "^11.0.0",

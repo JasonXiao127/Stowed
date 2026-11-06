@@ -1,0 +1,87 @@
+# Release automation. Version the apps independently with tags:
+#   stowed-web-v*    -> Docker Hub image + GitHub Release
+#   stow-client-v*   -> Electron installers attached to a GitHub Release
+#
+# Required repository secrets (Settings -> Secrets and variables -> Actions):
+#   DOCKERHUB_USERNAME / DOCKERHUB_TOKEN   (web image push only)
+#
+# The old manual flow (docker compose build/push, forge make locally) still
+# works; this workflow just makes a tag push do the same thing in CI.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'stowed-web-v*'
+      - 'stow-client-v*'
+
+permissions:
+  contents: write
+
+jobs:
+  docker-publish:
+    if: startsWith(github.ref_name, 'stowed-web-v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Derive image version from tag
+        id: version
+        run: echo "value=${GITHUB_REF_NAME#stowed-web-v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/stowed-web/Dockerfile
+          push: true
+          tags: |
+            maraudermarauder/stowed:${{ steps.version.outputs.value }}
+            maraudermarauder/stowed:latest
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          gh release create "$TAG" --title "$TAG" --notes "Docker image: \`maraudermarauder/stowed:$VERSION\` and \`:latest\`." \
+            || gh release view "$TAG" > /dev/null
+
+  client-installers:
+    if: startsWith(github.ref_name, 'stow-client-v')
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Fetch desktop binaries (yt-dlp, ffmpeg, deno)
+        run: npm run setup-binaries:client
+
+      - name: Make installers
+        run: npm run make:client
+
+      - name: Attach installers to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: apps/stow-client/out/make/**/*

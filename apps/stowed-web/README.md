@@ -181,7 +181,9 @@ npm install
 npm run build:web     # build the renderer into apps/stowed-web/dist/
 npm test              # run the unit tests (node --test: queue, security, MusicBrainz, trim)
 npm run start:web     # serve UI + API at http://localhost:5183
-# or hot-reload UI:  npm run dev:web  (Vite on :5173, proxied by the Node server)
+# Hot-reload UI (runs Node server + Vite together; open http://localhost:5183):
+#   npm run dev:web
+# Server-only / Vite-only pieces: npm run dev:web:server, npm run dev:web:ui
 ```
 
 ### Metadata API (MusicBrainz lookup + trim)

@@ -9,7 +9,10 @@
     "packages/*"
   ],
   "scripts": {
-    "dev:web": "npm run dev:server --workspace stowed-web",
+    "dev": "concurrently -k -n server,vite \"npm run dev:server --workspace stowed-web\" \"npm run dev:web --workspace stowed-web\"",
+    "dev:web": "concurrently -k -n server,vite \"npm run dev:server --workspace stowed-web\" \"npm run dev:web --workspace stowed-web\"",
+    "dev:web:server": "npm run dev:server --workspace stowed-web",
+    "dev:web:ui": "npm run dev:web --workspace stowed-web",
     "dev:client": "npm run dev --workspace stow-client",
     "build:web": "npm run build --workspace stowed-web",
     "build:client": "npm run package --workspace stow-client",
@@ -23,6 +26,9 @@
   "keywords": [],
   "author": "Stow",
   "license": "ISC",
+  "devDependencies": {
+    "concurrently": "^10.0.0"
+  },
   "allowScripts": {
     "esbuild@0.25.12": true
   },

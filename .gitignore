@@ -34,3 +34,6 @@ apps/*/.env.vite
 
 # Logs
 *.log
+
+# Local browser verification artifacts (screenshots, snapshots)
+.playwright-mcp/
