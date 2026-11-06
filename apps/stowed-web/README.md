@@ -92,31 +92,34 @@ update it if you change that line.)
 
 ### Build from source (optional)
 
-If you cloned this repo or want to change the code, the repo-root
-`docker-compose.yml` includes a `build:` block (context is the repo root, image
-recipe in `apps/stowed-web/Dockerfile`). Build a local image and run it instead:
+The default `docker-compose.yml` is pull-only: it runs the published
+`ghcr.io/jasonxiao127/stowed:latest` image. To build the web app locally
+instead, use the build override:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+```
+
+The override tags the local image `stowed-web:local`, so it never overwrites the
+published GHCR tag.
 
 yt-dlp is installed as the LATEST NIGHTLY build (a pure-Python package from the
 yt-dlp-nightly-builds GitHub release), so it always carries the newest YouTube
 player-client fixes — stable 2026.07.04 failed with `HTTP Error 403: Forbidden`
 on media downloads. It avoids the crash-prone PyInstaller "onefile" binary from
 v1.0.0 (`libz.so.1: failed to map segment from shared object`) and works on any
-CPU architecture. Rebuild with `docker compose build --no-cache stowed-web` to fetch
-a newer nightly.
+CPU architecture. Rebuild with `--no-cache` to fetch a newer nightly:
 
 ```bash
-docker compose up -d --build
+docker compose -f docker-compose.yml -f docker-compose.build.yml build --no-cache stowed-web
 ```
 
-To rebuild and push your own image to GitHub Container Registry
-(`ghcr.io/jasonxiao127/stowed`), the compose `image:` is already tagged
-correctly:
+To publish your own image to GitHub Container Registry
+(`ghcr.io/jasonxiao127/stowed`), build it directly from the repo root:
 
 ```bash
 docker login ghcr.io
-docker compose build stowed-web
-docker tag ghcr.io/jasonxiao127/stowed:latest ghcr.io/jasonxiao127/stowed:1.0.3
-docker compose push stowed-web
+docker build -f apps/stowed-web/Dockerfile -t ghcr.io/jasonxiao127/stowed:1.0.3 .
 docker push ghcr.io/jasonxiao127/stowed:1.0.3
 ```
 

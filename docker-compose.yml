@@ -1,11 +1,7 @@
 services:
   stowed-web:
-    build:
-      context: .
-      dockerfile: apps/stowed-web/Dockerfile
-    # Published image on GitHub Container Registry: ghcr.io/jasonxiao127/stowed
-    # If you just want to RUN it (no local build), use `pull_policy: always`
-    # (or the stock compose pulls it automatically when no build is needed):
+    # Pulled from GitHub Container Registry. To build from source instead, use
+    # the docker-compose.build.yml override (see the README).
     #   docker compose pull && docker compose up -d
     image: ghcr.io/jasonxiao127/stowed:latest
     container_name: stowed-web

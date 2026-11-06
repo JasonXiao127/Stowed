@@ -28,6 +28,9 @@ docker compose pull && docker compose up -d
 # open http://<machine-ip>:5183
 ```
 
+The default `docker-compose.yml` is pull-only and runs the GHCR image. For a
+local source build, use `docker-compose.build.yml` (see the web README).
+
 Details (permissions, API key, build-from-source, publishing to GitHub
 Container Registry `ghcr.io/jasonxiao127/stowed`): see [`apps/stowed-web/README.md`](apps/stowed-web/README.md).
 

@@ -1,0 +1,13 @@
+# Local build override. The default docker-compose.yml is pull-only and uses
+# the published image from GitHub Container Registry. To build from source:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+#
+# The local image is tagged stowed-web:local so it never overwrites the
+# published ghcr.io tag.
+services:
+  stowed-web:
+    image: stowed-web:local
+    build:
+      context: .
+      dockerfile: apps/stowed-web/Dockerfile
