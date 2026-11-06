@@ -1,12 +1,11 @@
 # Release automation. Version the apps independently with tags:
-#   stowed-web-v*    -> Docker Hub image + GitHub Release
+#   stowed-web-v*    -> GHCR image + GitHub Release
 #   stow-client-v*   -> Electron installers attached to a GitHub Release
 #
-# Required repository secrets (Settings -> Secrets and variables -> Actions):
-#   DOCKERHUB_USERNAME / DOCKERHUB_TOKEN   (web image push only)
-#
-# The old manual flow (docker compose build/push, forge make locally) still
-# works; this workflow just makes a tag push do the same thing in CI.
+# Uses the built-in GITHUB_TOKEN; no registry secrets are required. The web
+# image publishes to GitHub Container Registry as ghcr.io/<owner>/<repo>.
+# If the package is private, set its visibility to public in the package
+# settings (or run `docker login ghcr.io` before pulling).
 
 name: Release
 
@@ -18,9 +17,10 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 jobs:
-  docker-publish:
+  image-publish:
     if: startsWith(github.ref_name, 'stowed-web-v')
     runs-on: ubuntu-latest
     steps:
@@ -28,15 +28,18 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      - name: Log in to Docker Hub
+      - name: Derive image name and version
+        id: meta
+        run: |
+          echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+          echo "version=${GITHUB_REF_NAME#stowed-web-v}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Derive image version from tag
-        id: version
-        run: echo "value=${GITHUB_REF_NAME#stowed-web-v}" >> "$GITHUB_OUTPUT"
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push
         uses: docker/build-push-action@v6
@@ -45,16 +48,20 @@ jobs:
           file: apps/stowed-web/Dockerfile
           push: true
           tags: |
-            maraudermarauder/stowed:${{ steps.version.outputs.value }}
-            maraudermarauder/stowed:latest
+            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}
+            ${{ steps.meta.outputs.image }}:latest
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
 
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
-          VERSION: ${{ steps.version.outputs.value }}
+          IMAGE: ${{ steps.meta.outputs.image }}
+          VERSION: ${{ steps.meta.outputs.version }}
         run: |
-          gh release create "$TAG" --title "$TAG" --notes "Docker image: \`maraudermarauder/stowed:$VERSION\` and \`:latest\`." \
+          gh release create "$TAG" --title "$TAG" --notes "Container image: \`$IMAGE:$VERSION\` and \`$IMAGE:latest\`." \
             || gh release view "$TAG" > /dev/null
 
   client-installers:

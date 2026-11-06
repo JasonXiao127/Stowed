@@ -23,12 +23,13 @@ Shared code lives in `packages/`:
 
 ```bash
 mkdir -p downloads config && sudo chown -R 1000:1000 downloads config
+# If the GHCR package is private: docker login ghcr.io
 docker compose pull && docker compose up -d
 # open http://<machine-ip>:5183
 ```
 
-Details (permissions, API key, build-from-source, pushing to Docker Hub
-`maraudermarauder/stowed`): see [`apps/stowed-web/README.md`](apps/stowed-web/README.md).
+Details (permissions, API key, build-from-source, publishing to GitHub
+Container Registry `ghcr.io/jasonxiao127/stowed`): see [`apps/stowed-web/README.md`](apps/stowed-web/README.md).
 
 ### Desktop client (Electron)
 
@@ -70,8 +71,7 @@ stream straight from YouTube and repackages it with ffmpeg — no re-encoding, n
 - Full git history from both repos is preserved (subtree merge).
 - Version the apps independently with tags: `stow-client-v*` and `stowed-web-v*`.
   Pushing a tag runs the Release workflow: a `stowed-web-v*` tag builds and
-  pushes `maraudermarauder/stowed:<version>` + `:latest` to Docker Hub (needs
-  the `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` repo secrets; `<version>` is the
-  tag without the `stowed-web-v` prefix) and creates a GitHub Release; a
-  `stow-client-v*` tag builds installers on Linux/Windows/macOS and attaches
-  them to a GitHub Release.
+  pushes `ghcr.io/jasonxiao127/stowed:<version>` + `:latest` to GitHub Container
+  Registry using the built-in `GITHUB_TOKEN` (no registry secrets needed) and
+  creates a GitHub Release; a `stow-client-v*` tag builds installers on
+  Linux/Windows/macOS and attaches them to a GitHub Release.

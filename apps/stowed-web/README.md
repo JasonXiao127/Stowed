@@ -11,7 +11,7 @@ and handles downloads, and you open it from any device on your network at
 `http://<machine-ip>:5183`.
 
 
-### Quick start — pull the Docker Hub image
+### Quick start — pull the GitHub Container Registry image
 
 **1.** *(first time)* create the data folders owned by your uid/gid. Use the
 **same** uid as your *arr stack (e.g. `1000:1000`) so downloaded files match
@@ -27,7 +27,7 @@ sudo chown -R 1000:1000 downloads config
 ```yaml
 services:
   stowed-web:
-    image: maraudermarauder/stowed:latest
+    image: ghcr.io/jasonxiao127/stowed:latest
     container_name: stowed-web
     # ---- Web UI port (edit this ONE line to change it) ----
     x-stow-port: &stow_port 5183
@@ -74,6 +74,8 @@ services:
 **3.** Fetch the image and start it:
 
 ```bash
+# If the GHCR package is private:
+# docker login ghcr.io
 docker compose pull
 docker compose up -d
 ```
@@ -106,16 +108,21 @@ a newer nightly.
 docker compose up -d --build
 ```
 
-To rebuild and push your own image to Docker Hub (`maraudermarauder/stowed`),
-the compose `image:` is already tagged correctly:
+To rebuild and push your own image to GitHub Container Registry
+(`ghcr.io/jasonxiao127/stowed`), the compose `image:` is already tagged
+correctly:
 
 ```bash
-docker login
+docker login ghcr.io
 docker compose build stowed-web
-docker tag maraudermarauder/stowed:latest maraudermarauder/stowed:1.0.2
+docker tag ghcr.io/jasonxiao127/stowed:latest ghcr.io/jasonxiao127/stowed:1.0.3
 docker compose push stowed-web
-docker push maraudermarauder/stowed:1.0.2
+docker push ghcr.io/jasonxiao127/stowed:1.0.3
 ```
+
+> GHCR packages are private by default. To allow unauthenticated pulls, open the
+> package settings on GitHub and set its visibility to public. For private
+> pulls, run `docker login ghcr.io` with a token that has `read:packages`.
 
 ### Files, config & permissions
 
